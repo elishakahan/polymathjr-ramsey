@@ -1,10 +1,8 @@
 ###################################################################################################################
 # Enumerating graphs in R(K4,J5,18) by adding edges between R(K3, J5, 7) and R(K4, J4, 7)
 ###################################################################################################################
-import numpy as np
 from ortools.sat.python import cp_model
-from itertools import chain, combinations
-import copy
+import numpy as np
 import time
 
 ###################################################################################################################
@@ -16,7 +14,7 @@ def printBit(decimal, n):
 
 # Print binary form of list of decimal numbers
 def printBitList(decimalList, n):
-    return [printBit(decimal, n) for decimal in decimalList]
+    return str([printBit(decimal, n) for decimal in decimalList])
 
 # Print rows of a adjacency matrix on seperate lines
 def printGraph(graph):
@@ -61,12 +59,17 @@ def decodeG6(compressed, isSquare): # Option for triangle and square adjacency m
             index += 1
     return adjacencyMatrix
 
-def formatBitVect(bitVect): # Takes string bit vector and converts it into a int representing the bit vector (remember to keep track of length)
+def formatBitString(bitVect): # Takes string bit vector and converts it into an int representing the bit vector
     return int(bitVect, 2)
 
-def formatAdjacencyMatrix(adjacencyMatrix):# Takes lists of lists adjacency matrix and converts it into a list of ints (also remember to keep track of length)
-    return [int(''.join(str(ele) for ele in row), 2) for row in adjacencyMatrix]
+def formatBitList(bitVect): # Takes a list bit vector and converts it into an int representing the bit vector
+    num = 0
+    for i in bitVect[:-1]:
+        num = (num + i) << 1
+    return num + bitVect[-1]
 
+def formatGraph(adjacencyMatrix):# Takes lists of lists adjacency matrix and converts it into a list of ints
+    return [formatBitList(row) for row in adjacencyMatrix]
 ###################################################################################################################
 
 ###################################################################################################################
@@ -132,6 +135,7 @@ def feasibleCones(H, n):
     triangles = []
     maxClique(0, (1 << n) - 1, 0, triangles, H, n)
     triangles = [triangle for triangle in triangles if bin(triangle).count('1') == 3] # We only look at maximal cliques of three
+
     for triangle in triangles:
         model.AddBoolOr([variables[vertex].Not() for vertex in vertices if bitIndex(triangle, n - vertex - 1)]) # We ensure that a feasible cone doesn't contain all three vertices
 
@@ -190,13 +194,14 @@ def findSmaller(maximalList, order, n): # order is the order of the maximal subg
 def findJ(smaller, larger, order): # We take order - 1 and order independent sets.
     j = []
     length = len(smaller)
-    for k in range(length - 1):
-        for l in range(k + 1, length): # We iterate through all pairs in smaller
-            first, second = smaller[k], smaller[l]
-            if bin(first & second).count('1') == order - 2: # We check the intersection on the set of their vertices
-                combo = first | second
-                if combo not in larger: # We check if the union on their sets of their vertices is in larger
-                    j.append(combo)
+    if len(smaller) > 1: # We make sure smaller is big enough
+        for k in range(length - 1):
+            for l in range(k + 1, length): # We iterate through all pairs in smaller
+                first, second = smaller[k], smaller[l]
+                if bin(first & second).count('1') == order - 2: # We check the intersection on the set of their vertices
+                    combo = first | second
+                    if combo not in larger: # We check if the union on their sets of their vertices is in larger
+                        j.append(combo)
     return j
 
 # Finds the maximum graphs in a list of maximal subgraphs
@@ -208,52 +213,46 @@ def maximalToMaximum(maximal, order):
 # We calculate its cliques and independent sets of order 2 and 3, as well as its independent J3s
 # Using these, we define collapsing rules
 
-# But first, a helper function to see if a one set in bit form contains another
-def isContains(bitVect, bitVect2):
+# Helper function to see if a one set in bit form contains another
+def isContains(bitVect1, bitVect2):
     return (bitVect1 & bitVect2) == bitVect2
 
 # Helper function to see if the intersection of one set with another has at least one element
 def isNotConnect(bitVect1, bitVect2):
     return (bitVect1 & bitVect2) == 0
 
-# Helper function to check if at least element of a set is contains in the intersection sets or if two elements are contained in the union of the two sets
+# Helper function to check if at least element of the third set is contained in the intersection of the sets or if two of its elements are contained in the union of the two sets
 def isNotDoubleConnect(intersection, union, bitVect):
-    return not (isNotConnect(intersection, bitVect) or (bin(union & bitVect).count('1') >= 2))
-
-# Special, faster case when the the set has only two elements
-def isNotDoubleConnect2(intersection, union, bitVect):
-    return not (isNotConnect(intersection, nonEdge) or isContains(union, nonEdge))
+    check = union & bitVect # We see how many bits are set in this number
+    return isNotConnect(intersection, bitVect) and check & (check - 1) == 0 # The last portion checks if check only contains one vertex
 
 class H(object):
-    def __init__(self, adjacencyMatrix, n):
+    def __init__(self, graph, n):
         self.n = n # Number of vertices
+        self.k2, self.e2 = findEdges(graph, n) # Find edges and non-edges
 
-        self.k2, self.e2 = findEdges(adjacencyMatrix, n) # Find edges and non-edges
-        formattedAdjacencyMatrix = formatAdjacencyMatrix(adjacencyMatrix)
-
+        graph = formatGraph(graph)
         k3 = []
-        maxClique(0, (1 << n) - 1, 0, k3, formattedAdjacencyMatrix, n)
+        maxClique(0, (1 << n) - 1, 0, k3, graph, n)
         self.k3 = maximalToMaximum(k3, 3) # Find triangles
-
         e3 = []
-        maxSet(0, (1 << n) - 1, 0, k3, formattedAdjacencyMatrix, n)
+        maxSet(0, (1 << n) - 1, 0, e3, graph, n)
         self.e3 = maximalToMaximum(e3, 3) # Find independent 3-sets
+        self.j3 = findJ(self.e2, self.e3, 3) # Find independent J3's
 
-        self.j3 = findJ(self.e2, self.e3, 3)
-
-    def K2(cone1, cone2): # Collapsing rule if two vertices in G are connected
+    def K2(self, cone1, cone2): # Collapsing rule if two vertices in G are connected
         intersection = cone1 & cone2 # We look at the intersection of the neighborhoods of the cones
         for edge in self.k2:
-            if isContains(union, edge): # We make sure that the it contains no edges
+            if isContains(intersection, edge): # We make sure that the it contains no edges
                 return False
 
         union = cone1 | cone2 # We look at the union of the neighborhoods of the cones
         for ind3set in self.e3:
-            if isNotConnect(union, in3set): # We make sure it connects to every indpendent 3-set
+            if isNotConnect(union, ind3set): # We make sure it connects to every indpendent 3-set
                 return False
         return True
 
-    def E2(cone1, cone2): # Collapsing rule if two vertices in G are not connected
+    def E2(self, cone1, cone2): # Collapsing rule if two vertices in G are not connected
         union = cone1 | cone2 # We look at the union of the neighborhoods of the cones
         for sub in self.j3:
             if isNotConnect(union, sub): # We make sure it connects to every independent j3
@@ -265,14 +264,14 @@ class H(object):
                 return False
         return True
 
-    def J3(cone1, cone2, cone3): # Collapsing rule if three vertices in G form an independent j3
+    def J3(self, cone1, cone2, cone3): # Collapsing rule if three vertices in G form an independent j3
         union = cone1 | cone2 | cone3 # We look at the union of the neighborhoods of the cones
         for nonEdge in self.e2:
             if isNotConnect(union, nonEdge): # We make sure it connects to every non-edge
                 return False
         return True
 
-    def E3(cone1, cone2, cone3): # Collapsing rule if three vertices in G are not connected
+    def E3(self, cone1, cone2, cone3): # Collapsing rule if three vertices in G are not connected
         union = cone1 | cone2 | cone3 # We look at the union of the neighborhoods of the cones
         for edge in self.k2:
             if isNotConnect(union, edge): # We make sure it connects to every edge
@@ -280,287 +279,278 @@ class H(object):
 
         intersection = (cone1 & cone2) | (cone1 & cone3) | (cone2 & cone3) # We also need to look at the union of the pairwise intersections of the neighborhoods
         for nonEdge in self.e2:
-            if isNotDoubleConnect2(intersection, union, nonEdge): # We make sure that there are two edges to every non-edge
+            if isNotDoubleConnect(intersection, union, nonEdge): # We make sure that there are two edges to every non-edge
                 return False
         return True
 
-    def J4(cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G form an independent j4
+    def J4(self, cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G form an independent j4
         union = cone1 | cone2 | cone3 | cone4 # We look at the union of the neighborhood of the cones
         return union == (1 << self.n)  - 1 # It has to include every vertex
 
-    def E4(cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G are indepedents
+    def E4(self, cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G are indepedents
         intersection = (cone1 & cone2) | (cone1 & cone3) | (cone1 & cone4) | (cone2 & cone3) | (cone2 & cone4) | (cone3 & cone4) # We look at the union of the pairwise intersections of the neighborhoods
-        return union == (1 << self.n)  - 1 # It has to include every vertex
+        return intersection == (1 << self.n)  - 1 # It has to include every vertex
 
+    def __str__(self):
+        return "K2: " + printBitList(self.k2, 7) + "\n" + "K3: " + printBitList(self.k3, 7) + "\n" +\
+               "E2: " + printBitList(self.e2, 7) + "\n" + "E3: " + printBitList(self.e3, 7) + "\n" +\
+               "J3: " + printBitList(self.j3, 7)
+
+graph = [[0, 0, 0, 1, 1, 0, 0],
+         [0, 0, 0, 0, 1, 1, 0],
+         [0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 1, 0, 1, 1, 1],
+         [1, 1, 0, 1, 0, 1, 0],
+         [0, 1, 0, 1, 1, 0, 1],
+         [0, 0, 1, 1, 0, 1, 0]]
+###################################################################################################################
 
 ###################################################################################################################
-# The Rest Is Unfinished
-# Using these rules, we can make a general collapsing rule that takes as input the collapsed adjunct and parent and tests if they are compatible
-def collapse(parentDict, adjunctDict, G, H):
-    parentVertices = set(parentDict.keys())
-    adjunctVertices = set(adjunctDict.keys())
-    # First we check if the parent and the adjunct are compatible
-    for vertex in parentVertices.intersection(adjunctVertices):
-        if parentDict[vertex] != adjunctDict[vertex]:
-            return False
+# We begin the creation of our final double tree.
+# We need to recursively determine the adjunct and parent of each of our graphs in R(K3, J5, 7)
+# At the root nodes, which consist only of one vertex, we assign possible neighborhoods as the set of feasible cones
+# We use recursively use the information from the adjunct and the parent of a node to collapse that node
 
-    # We are only concerned with sub-structures involving the last vertex and the vertices between the adjunct vertex and the second to last vertex
-    parentVertex = max(adjunctVertices)
-    parentCone = adjunctDict[parentVertex]
-    checkVertices = parentVertices.difference(adjunctVertices)
+# Turn a bit vector into a a list of vertices
+def findIndices(bitVector, n):
+    indices = []
+    pointer = 1
+    for i in range(0, n):
+        if bitVector & pointer != 0:
+            indices.append(n - i - 1) # We iterate through the bit vector, checking if the value is equal to 1
+        pointer <<= 1
+    return indices
 
-    # Find blue edges
-    notNeighbors = set(notNeighboring(parentVertex, G)).intersection(checkVertices)
-    for notNeighbor in notNeighbors:
-        if not e2(parentCone, parentDict[notNeighbor], H):
-            return False
+# Do the same thing, but for every item in a list
+def findIndicesList(collection, n):
+    return [findIndices(sub, n) for sub in collection]
 
-    # Find edges:
-    neighbors = set(neighboring(parentVertex, G)).intersection(checkVertices)
-    for neighbor in neighbors:
-        if not k2(parentCone, parentDict[neighbor], H):
-            return False
+class collapsableNode(Node):
+    def __init__(self, n, graph, vertices, neighborhoods, isCollapsed):
+        super(Node, self, n, graph, vertices).__init__()
 
-    # Find independent 3-sets and first case of complement J3s:
-    ind3set = []
-    j3case1 = []
-    unNeighbors = notNeighbors.copy()
-    for i in range(len(notNeighbors) - 1):
-        vertex = unNeighbors.pop()
-        for unNeighbor in unNeighbors:
-            if G[vertex][unNeighbor] == 0:
-                ind3set.append({vertex, unNeighbor})
-                if not e3(parentCone, parentDict[vertex], parentDict[unNeighbor], H):
-                    return False
+        adjunctComp =  ((1 << (self.n)) - 1) ^ (self.adjunctVertices)
+        neighbors = adjunctComp & self.graph[-1]
+        notNeighbors = adjunctComp & ~self.graph[-1]
+        notEdges = [1 | notNeighbor for notNeighbor in expand(notNeighbors, self.n)]
 
-            elif G[vertex][unNeighbor] == 1:
-                j3case1.append({vertex, unNeighbor})
-                if not j3(parentCone, parentDict[vertex], parentDict[unNeighbor], H):
-                    return False
+        maxSets = []
+        maxSet(1, neighbors, notNeighbors, maxSets, graph, self.n)
+        ind4sets = maximalToMaximum(e4, 4) # Find independent 4-sets
+        ind3sets = findSmaller(maxSets, 4, self.n) # Find independent 3-sets
+        j3sets = findJ(notEdges, ind3sets, 3) # Find independent J3
+        j4sets = findJ(ind3sets, ind4sets, 4) # Find independent J3
 
-    # Find second case of complement J3s:
-    j3case2 = []
-    for neighbor in neighbors:
-        for notNeighbor in notNeighbors:
-            if G[neighbor][notNeighbor] == 0:
-                j3case2.append({neighbor, notNeighbor})
-                if not j3(parentCone, parentDict[neighbor], parentDict[notNeighbor], H):
-                    return False
+        self.k2 = findIndices(neighbors, self.n)
+        self.e2 = findIndices(notNeighbors, self.n)
+        self.j3 = [findIndices(sub ^ 1, self.n) for sub in j3sets]
+        self.e3 = [findIndices(sub ^ 1, self.n) for sub in ind3sets]
+        self.j4 = [findIndices(sub ^ 1, self.n) for sub in j4sets]
+        self.e4 = [findIndices(sub ^ 1, self.n) for sub in ind4sets]
 
+    def collapseNode(self, H):
+        parentNeighborhoods = (self.parent).neighborhoods
+        adjunctNeighborhoods = (self.adjunct).neighborhoods
 
-    # Find independent 4-sets
-    ind4set = []
-    indLength = len(ind3set)
-    for i in range(indLength - 2):
-        for j in range(i + 1, indLength - 1):
-            blue1 = ind3set[i]
-            blue2 = ind3set[j]
-            if blue1.intersection(blue2) != set():
-                blue3 = blue1.symmetric_difference(blue2)
-                if blue3 in ind3set[j + 1:]:
-                    ind4 = blue1.union(blue2)
-                    ind4set.append(ind4)
+        shared = (self.adjunct).n - 1 # Find shared portion of parent and adjunct to make sure they are equivalent
+        K2 = findIndicesList(self.k2, self.n)
+        J3 = findIndicesList(self.j3, self.n)
+        J4 = findIndicesList(self.j4, self.n)
+        E2 = findIndicesList(self.e2, self.n)
+        E3 = findIndicesList(self.e3, self.n)
+        E4 = findIndicesList(self.e4, self.n)
+        for possibleParent in parentNeighborhoods:
+            for possibleAdjunct in adjunctNeighborhoods: # We iterate through all possible parent adjunct combinations
+                cone1 = possibleAdjunct[-1]
+                flag = False
+                if possibleParent[:shared] == possibleAdjunct[:-1]:
+                    for sub in K2:
+                        if not H.K2(cone1, possibleParent[sub[0]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
 
-                    listInd4 = list(ind4)
-                    if not e4(parentCone, listInd4[0], listInd4[1], listInd4[2], H):
-                        ruleTime += time.time() - startRule
-                        return False
+                    for sub in E2:
+                        if not H.E2(cone1, possibleParent[sub[0]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
 
-    j4case1 = []
-    # Find first case of complement J4s
-    for edge in j3case1:
-        for notNeighbor in notNeighbors.difference(edge):
-            listEdge = list(edge)
-            vertex1 = listEdge[0]
-            vertex2 = listEdge[1]
-            if G[notNeighbor][vertex1] == 0 and G[notNeighbor][vertex2] == 0:
-                j4case1.append({notNeighbor, vertex1, vertex2})
-                if not j4(parentCone, parentDict[notNeighbor], parentDict[vertex1], parentDict[vertex2], H):
-                    return False
+                    for sub in J3:
+                        if not H.J3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
 
-    # Find the second case of complement J4s
-    j4case2 = []
-    for neighbor in neighbors:
-        for ind3 in ind3set:
-            listInd3 = list(ind3)
-            vertex1 = listInd3[0]
-            vertex2 = listInd3[1]
-            if G[neighbor][vertex1] == 0 and G[neighbor][vertex2] == 0:
-                j4case2.append({neighbor, vertex1, vertex2})
-                if not j4(parentCone, parentDict[neighbor], parentDict[vertex1], parentDict[vertex2], H):
-                    return False
-    return True
+                    for sub in E3:
+                        if not H.E3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
 
-################################################################################
-# We now need to make a double tree with our (K3, J5)
-collapseTime = 0
+                    for sub in J4:
+                        if not H.J4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+
+                    for sub in E4:
+                        if not H.E4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+                    (self.neighborhoods).append(possibleParent + list(possibleAdjunct[-1]))
+
+        self.isCollapsed = True
+        return self
+'''
 class Node(object):
-    adjunctSequence = [1, 1, 2, 2, 3, 3, 4]        # This will be our sequence for determining adjuncts
-    treeDict = {i:[] for i in range(1, 8)}         # This will keep track of the each of the levels of the tree
-    mainBranchesDict = {i:[] for i in range(1, 8)} # This will keep track of the main branches of the tree
-    H = None
+    roots = []
+    tree = []
 
-    def __init__(self, G, vertices, verticesSetDict, isMain, isCollapsed):
-        self.G = G
-        self.vertices        = vertices        # This is a list of labelled vertices
-        self.verticesSetDict = verticesSetDict # For each of these vertices, we need to keep track of which vertices in H they're connected to
-        self.level = len(vertices)                     # The number of vertices determines the node level on the tree
-        self.depth = len(verticesSetDict[vertices[0]]) # Current number of possible sequences of feasible cones available at the node
-        self.isMain      = isMain      # Is it on the main branches of the tree?
-        self.isCollapsed = isCollapsed # Has the algorithm already calculated the possible sequences of feasible cones at this node? (originally set to False)
-
-        self.loc = len(Node.treeDict[self.level])
-        Node.treeDict[self.level].append(self)
-        if self.isMain:
-            Node.mainBranchesDict[self.level].append(self)
+    def __init__(self, n, graph, vertices, neighborhoods, isCollapsed):
+        (Node.tree).append(self)
+        self.graph = graph # The adjacency matrix the node represents, in formatted form
+        self.vertices = vertices  # Vertices of the original graph, stored in a list
+        self.n = n # Number of vertices in the graph
+        self.neighborhoods = neighborhoods # List of lists, where each list in the outer list is a possible sequence of neighborhoods for each vertex
+        self.isCollapsed = isCollapsed # The node has been collapsed, all possibilies for neighborhoods for its vertices calculated
 
         # We calculate the parent and adjunct, but only if the graph has more than two vertices
         self.parent = None
         self.adjunct = None
-        if self.level > 1:
-            # Sees if the parent already has been created
-            parentVertices = self.vertices[:-1]
-            parentGraph =  [[(self.G)[row][col] if (row in parentVertices and col in parentVertices) else None for col in range(len(self.G)) ] for row in range(len(self.G))]
-            for node in Node.treeDict[self.level - 1]:
-                if node.G == parentGraph:
-                    self.parent = node
-                    if self.isMain:
-                        if node not in Node.mainBranchesDict[self.level - 1]:
-                            node.isMain = True
-                            Node.mainBranchesDict[self.level - 1].append(node)
-                    break
-            else:
-                # Creates a parent node
-                parentDict = {vertex:[] for vertex in parentVertices}
-                newNode = Node(parentGraph, parentVertices, parentDict, self.isMain, False)
-                self.parent = newNode
 
-            # Finds or creates an adjunct node
-            adjunctVertices = self.vertices[0 : Node.adjunctSequence[self.level - 1] - 1] + [self.vertices[-1]]
-            adjunctGraph = [[self.G[row][col] if (row in adjunctVertices and col in adjunctVertices) else None for col in range(len(self.G)) ] for row in range(len(self.G))]
-            for node in Node.treeDict[Node.adjunctSequence[self.level - 1]]:
-                if node.G == adjunctGraph:
-                    self.adjunct = node
-                    break
+        if n > 1:
+            # Creates a parent node
+            parentVertices = vertices[:-1]
+            parentGraph = [(row & ~1) >> 1 for row in graph[:-1]]
+            newNode = Node(n - 1, parentGraph, parentVertices, [], False)
+            self.parent = newNode
 
-            else:
-                adjunctDict = {vertex: [] for vertex in adjunctVertices}
-                newNode = Node(adjunctGraph, adjunctVertices, adjunctDict, False, False)
-                self.adjunct = newNode
+            # Creates an adjunct node
+            adjunctSequence = [1, 1, 2, 2, 3, 3, 4] # This sequence will determine the adjunct
+            adjunctNum = adjunctSequence[n - 1] # We access the class instance adjunctSequence to determine the the number of vertices in the adjunct
+            adjunctVertices = vertices[0 : adjunctNum - 1] + [vertices[-1]] # The definition of an adjunct of a graph
+            adjunctIndices = ((1 << (adjunctNum - 1)) << (n - adjunctNum + 1)) | 1
+            adjunctGraph = graph[:adjunctNum - 1] + [graph[-1]]
+            adjunctGraph = [((row & adjunctIndices) >> (n - adjunctNum)) | (row & 1) for row in adjunctGraph]
+            newNode = Node(adjunctNum, adjunctGraph, adjunctVertices, [], False)
+            self.adjunct = newNode
 
-    # Gives a sequence of feasible cones at a certain depth in the dictionary
-    def index(self, i):
-        return {vertex:self.verticesSetDict[vertex][i] for vertex in self.verticesSetDict}
+            neighbors = graph[-1] & ~(adjunctIndices)
+            nonNeighbors = (1 << n - 1) & ~graph[-1] & ~(adjunctIndices)
+            self.k2, self.e2 = [1 | neighbor for neighbor in expand(neighbors, n)], [1 | nonNeighbor for nonNeighbor in expand(nonNeighbors, n)]
 
-    # Collapses a node based on its ajunct and its parent
-    def collapseNode(self):
-        global collapseTime
+            e4 = []
+            maxSet(1, nonNeighbors, neighbors, e4, graph, self.n)
+            self.e4 = maximalToMaximum(e4, 3) # Find independent 4-sets
+            self.e3 = findSmaller(e4, 4, self.n) # Find independent 3-sets
+            self.j3 = findJ(self.e2, self.e3, 3) # Find independent J3
+            self.j4 = findJ(self.e3, self.e4, 4) # Find independent J3
+
+        else:
+            (Node.roots).append(self)
+
+    # Collapses a node based on its adjunct and its parent
+    def collapseNode(self, H):
         # Recursively, we need the parent and the adjunct collapsed
-        parent = self.parent
-        adjunct = self.adjunct
-        last = self.vertices[-1]
-        verticesSetDict = self.verticesSetDict
-        Ggraph = self.G
-        Hgraph = Node.H
+        if not (self.parent).isCollapsed:
+            (self.parent).collapseNode(H)
+        if not (self.adjunct).isCollapsed:
+            (self.adjunct).collapseNode(H)
 
-        if not parent.isCollapsed:
-            parent.collapseNode()
-        if not adjunct.isCollapsed:
-            adjunct.collapseNode()
+        parentNeighborhoods = (self.parent).neighborhoods
+        adjunctNeighborhoods = (self.adjunct).neighborhoods
 
-        for i in range(parent.depth):
-            for j in range(adjunct.depth):
-                newLayer = parent.index(i)
-                indexedAdjunct = adjunct.index(j)
+        shared = (self.adjunct).n - 1 # Find shared portion of parent and adjunct to make sure they are equivalent
+        K2 = findIndicesList(self.k2, self.n)
+        J3 = findIndicesList(self.j3, self.n)
+        J4 = findIndicesList(self.j4, self.n)
+        E2 = findIndicesList(self.e2, self.n)
+        E3 = findIndicesList(self.e3, self.n)
+        E4 = findIndicesList(self.e4, self.n)
+        for possibleParent in parentNeighborhoods:
+            for possibleAdjunct in adjunctNeighborhoods: # We iterate through all possible parent adjunct combinations
+                cone1 = possibleAdjunct[-1]
+                flag = False
+                if possibleParent[:shared] == possibleAdjunct[:-1]:
+                    for sub in K2:
+                        if not H.K2(cone1, possibleParent[sub[0]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
 
-                startTime = time.time()
-                canCollapse = collapse(indexedAdjunct, newLayer, Ggraph, Hgraph)
-                collapseTime += time.time() - startTime
-                if canCollapse:
-                    newLayer[last] = indexedAdjunct[last]
-                    for vertex in verticesSetDict:
-                        verticesSetDict[vertex].append(newLayer[vertex])
-                    self.verticesSetDict = verticesSetDict
-                    self.depth += 1
+                    for sub in E2:
+                        if not H.E2(cone1, possibleParent[sub[0]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+
+                    for sub in J3:
+                        if not H.J3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+
+                    for sub in E3:
+                        if not H.E3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+
+                    for sub in J4:
+                        if not H.J4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+
+                    for sub in E4:
+                        if not H.E4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
+                            flag = True
+                            break
+                    if flag == True:
+                        continue
+                    (self.neighborhoods).append(possibleParent + list(possibleAdjunct[-1]))
+
         self.isCollapsed = True
-
         return self
+###################################################################################################################
 
-    def __str__(self):
-        return "Graph:\n" + formatGraph(self.G) + "Dict:\n" + formatDict(self.verticesSetDict) + "\n"
-
-# run #########################################################################
-programTime = time.time()
-
+# run #############################################################################################################
 # R(K4,J6,10) to find feasible cones in
 with open('k4k4e_10.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [decodeG6(graph, True) for graph in k4j4]
 #printGraphs(k4j4)
+Hs = [H(graph, 10) for graph in k4j4]
 
 # Make double tree with these R(K3, J5, 7)
 with open('k3k5e_07.g6', 'r') as file:
     k3j5 = file.read().splitlines()
 k3j5 = [decodeG6(graph, True) for graph in k3j5]
 # printGraphs(k3j5)
-"""
-blankVertices = list(range(7))
-blankverticesSetDict = {vertex:[] for vertex in range(7)}
-# print(formatDict(blankverticesSetDict))
+Gs = [Node(7, formatAdjacencyMatrix(graph), list(range(7)), [], False) for graph in k3j5]
 
-startTree = time.time()
-for graph in k3j5:
-    Node(graph, blankVertices, blankverticesSetDict, True, False)
-treeTime = time.time() - startTree
-
-for level in Node.treeDict:
-    print("----------------------------------------LEVEL:" + str(level) + "----------------------------------------")
-    for node in Node.treeDict[level]:
-        print(node)
-"""
-'''
-Htime = 0
-totalCollapseTime = 0
-for H in k4j4[0:1]:
-    startH = time.time()
-    cones = feasibleCones(H)
-    Htime += time.time() - startH
-
-    print("\n".join(str(row) for row in H))
-    length = len(cones)
-
-    Node.H = H
-    rootNodes = Node.treeDict[1]
-    for root in rootNodes:
-        root.depth = length
-        root.verticesSetDict = {vertex:cones for vertex in root.vertices}
+for h in Hs:
+    neighborhoods = [[neighborhood] for neighborhood in h.feasibleCones]
+    for root in Node.roots:
+        root.neighborhoods = neighborhoods
         root.isCollapsed = True
 
-    startTotalCollapse = time.time()
-    for level in range(2, len(k3j5[0]) + 1):
-        for node in Node.mainBranchesDict[level]:
-            node.collapseNode()
-    totalCollapseTime += time.time() - startTotalCollapse
+    for g in Gs:
+        g.collapseNode(h)
 
-    for level in Node.treeDict:
-        print(level)
-        print("-------------------------------------------------------------------------------------------------------------------------------------------------------")
-        for node in Node.treeDict[level]:
-            print(node)
-            print("\n")
-
-    for level in Node.treeDict:
-        for node in Node.treeDict[level]:
-            node.depth = 0
-            node.verticesSetDict = {vertex:[] for vertex in node.vertices}
-            node.isCollapsed = False
-programTime = time.time() - programTime
-
-print(programTime)
-print(treeTime)
-print(Htime)
-print(totalCollapseTime)
-print(collapseTime)
-print(ruleTime)
-print(helpRuleTime)
+    for graph in Node.tree:
+        graph.neighborhoods = []
 '''
