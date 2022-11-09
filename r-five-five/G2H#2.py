@@ -4,6 +4,7 @@
 from ortools.sat.python import cp_model
 import numpy as np
 import time
+import itertools
 
 ###################################################################################################################
 # Some printing functions (who might instead return convenient strings)
@@ -12,9 +13,9 @@ import time
 def printBit(decimal, n):
     return bin(int(decimal))[2:].zfill(n)
 
-# Print binary form of list of decimal numbers
+# Print binary form of tuple of decimal numbers
 def printBitList(decimalList, n):
-    return str([printBit(decimal, n) for decimal in decimalList])
+    return str(tuple(printBit(decimal, n) for decimal in decimalList))
 
 # Print rows of a adjacency matrix on seperate lines
 def printGraph(graph):
@@ -69,7 +70,7 @@ def formatBitList(bitVect): # Takes a list bit vector and converts it into an in
     return num + bitVect[-1]
 
 def formatGraph(adjacencyMatrix):# Takes lists of lists adjacency matrix and converts it into a list of ints
-    return [formatBitList(row) for row in adjacencyMatrix]
+    return tuple(formatBitList(row) for row in adjacencyMatrix)
 ###################################################################################################################
 
 ###################################################################################################################
@@ -103,7 +104,7 @@ def maxClique(R, P, X, maxCliques, adjacencyMatrix, n): # Our cliques will recur
 # A helper function to take the complement of a formatted adjacency matrix
 def complement(adjacencyMatrix, n):
     flip = (1 << n) - 1
-    return [flip ^ adjacencyMatrix[row] ^ (1 << n - row - 1) for row in range(n)]
+    return tuple(flip ^ adjacencyMatrix[row] ^ (1 << n - row - 1) for row in range(n))
 
 # To find independent sets, we look instead at the complement adjacency matrix
 def maxSet(R, P, X, maxSets, adjacencyMatrix, n):
@@ -325,232 +326,106 @@ def findIndices(bitVector, n):
 def findIndicesList(collection, n):
     return [findIndices(sub, n) for sub in collection]
 
-class collapsableNode(Node):
-    def __init__(self, n, graph, vertices, neighborhoods, isCollapsed):
-        super(Node, self, n, graph, vertices).__init__()
+def perms(n):
+    return list(itertools.permutations(range(n)))
 
-        adjunctComp =  ((1 << (self.n)) - 1) ^ (self.adjunctVertices)
-        neighbors = adjunctComp & self.graph[-1]
-        notNeighbors = adjunctComp & ~self.graph[-1]
-        notEdges = [1 | notNeighbor for notNeighbor in expand(notNeighbors, self.n)]
+def permuteList(perm, aList):
+    return [aList[i] for i in perm]
 
-        maxSets = []
-        maxSet(1, neighbors, notNeighbors, maxSets, graph, self.n)
-        ind4sets = maximalToMaximum(e4, 4) # Find independent 4-sets
-        ind3sets = findSmaller(maxSets, 4, self.n) # Find independent 3-sets
-        j3sets = findJ(notEdges, ind3sets, 3) # Find independent J3
-        j4sets = findJ(ind3sets, ind4sets, 4) # Find independent J3
+def permuteBit(perm, bitVector, n):
+    permuted = 0
+    for i in range(n):
+        index = perm[i] # Index in the bit vector we are looking for
+        permuted |= ((1 << (n - index - 1)) & bitVector) >> (n - index - 1) << (n - i - 1) # We look to see what the value is in the permuted spot and add it to our new vector
+    return permuted
 
-        self.k2 = findIndices(neighbors, self.n)
-        self.e2 = findIndices(notNeighbors, self.n)
-        self.j3 = [findIndices(sub ^ 1, self.n) for sub in j3sets]
-        self.e3 = [findIndices(sub ^ 1, self.n) for sub in ind3sets]
-        self.j4 = [findIndices(sub ^ 1, self.n) for sub in j4sets]
-        self.e4 = [findIndices(sub ^ 1, self.n) for sub in ind4sets]
+def permuteMatrix(perm, matrix, n):
+    return tuple(permuteBit(perm, matrix[i], n) for i in perm)
 
-    def collapseNode(self, H):
-        parentNeighborhoods = (self.parent).neighborhoods
-        adjunctNeighborhoods = (self.adjunct).neighborhoods
+def isomorphism(adjacencyMatrix1, adjacencyMatrix2, n, permutations):
+    for permutation in permutations:
+        if permuteMatrix(permutation, adjacencyMatrix1, n) == adjacencyMatrix2:
+            return permutation
+    return False
 
-        shared = (self.adjunct).n - 1 # Find shared portion of parent and adjunct to make sure they are equivalent
-        K2 = findIndicesList(self.k2, self.n)
-        J3 = findIndicesList(self.j3, self.n)
-        J4 = findIndicesList(self.j4, self.n)
-        E2 = findIndicesList(self.e2, self.n)
-        E3 = findIndicesList(self.e3, self.n)
-        E4 = findIndicesList(self.e4, self.n)
-        for possibleParent in parentNeighborhoods:
-            for possibleAdjunct in adjunctNeighborhoods: # We iterate through all possible parent adjunct combinations
-                cone1 = possibleAdjunct[-1]
-                flag = False
-                if possibleParent[:shared] == possibleAdjunct[:-1]:
-                    for sub in K2:
-                        if not H.K2(cone1, possibleParent[sub[0]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
+def isomorphismList(adjacencyMatrix, nodeList, n, permutations):
+    labellings = {permuteMatrix(permutation, adjacencyMatrix, n):permutation for permutation in permutations}
+    for node in nodeList:
+        graph = node.graph
+        if graph in labellings:
+            return (graph, labellings[graph])
+    return False
 
-                    for sub in E2:
-                        if not H.E2(cone1, possibleParent[sub[0]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in J3:
-                        if not H.J3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in E3:
-                        if not H.E3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in J4:
-                        if not H.J4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in E4:
-                        if not H.E4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-                    (self.neighborhoods).append(possibleParent + list(possibleAdjunct[-1]))
-
-        self.isCollapsed = True
-        return self
-'''
 class Node(object):
-    roots = []
-    tree = []
+    nodesDict = {i:[] for i in range(1, 8)}
+    permsDict = {i:perms(i) for i in range(1, 8)}
+    adjunctDict = {1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4}
 
-    def __init__(self, n, graph, vertices, neighborhoods, isCollapsed):
-        (Node.tree).append(self)
+    def __init__(self, n, graph):
         self.graph = graph # The adjacency matrix the node represents, in formatted form
-        self.vertices = vertices  # Vertices of the original graph, stored in a list
-        self.n = n # Number of vertices in the graph
-        self.neighborhoods = neighborhoods # List of lists, where each list in the outer list is a possible sequence of neighborhoods for each vertex
-        self.isCollapsed = isCollapsed # The node has been collapsed, all possibilies for neighborhoods for its vertices calculated
-
-        # We calculate the parent and adjunct, but only if the graph has more than two vertices
-        self.parent = None
-        self.adjunct = None
+        self.n = n
+        Node.nodesDict[n].append(self)
 
         if n > 1:
             # Creates a parent node
-            parentVertices = vertices[:-1]
-            parentGraph = [(row & ~1) >> 1 for row in graph[:-1]]
-            newNode = Node(n - 1, parentGraph, parentVertices, [], False)
-            self.parent = newNode
+            parentGraph = tuple((row & ~1) >> 1 for row in graph[:-1])
+            parent = isomorphismList(parentGraph, Node.nodesDict[n - 1], n - 1, Node.permsDict[n - 1])
+            if not parent:
+                self.parent = Node(n - 1, parentGraph)
+            else:
+                self.parent = parent
 
             # Creates an adjunct node
-            adjunctSequence = [1, 1, 2, 2, 3, 3, 4] # This sequence will determine the adjunct
-            adjunctNum = adjunctSequence[n - 1] # We access the class instance adjunctSequence to determine the the number of vertices in the adjunct
-            adjunctVertices = vertices[0 : adjunctNum - 1] + [vertices[-1]] # The definition of an adjunct of a graph
+            adjunctNum = Node.adjunctDict[n] # We access the class instance adjunctSequence to determine the the number of vertices in the adjunct
             adjunctIndices = ((1 << (adjunctNum - 1)) << (n - adjunctNum + 1)) | 1
-            adjunctGraph = graph[:adjunctNum - 1] + [graph[-1]]
-            adjunctGraph = [((row & adjunctIndices) >> (n - adjunctNum)) | (row & 1) for row in adjunctGraph]
-            newNode = Node(adjunctNum, adjunctGraph, adjunctVertices, [], False)
-            self.adjunct = newNode
+            adjunctGraph = graph[:adjunctNum - 1] + (graph[-1],)
+            adjunctGraph = tuple(((row & adjunctIndices) >> (n - adjunctNum)) | (row & 1) for row in adjunctGraph)
+            adjunct = isomorphismList(adjunctGraph, Node.nodesDict[adjunctNum], adjunctNum, Node.permsDict[adjunctNum])
+            if not adjunct:
+                self.parent = Node(adjunctNum, adjunctGraph)
+            else:
+                self.adjunct = adjunct
 
-            neighbors = graph[-1] & ~(adjunctIndices)
-            nonNeighbors = (1 << n - 1) & ~graph[-1] & ~(adjunctIndices)
-            self.k2, self.e2 = [1 | neighbor for neighbor in expand(neighbors, n)], [1 | nonNeighbor for nonNeighbor in expand(nonNeighbors, n)]
+            adjunctComp =  ((1 << (n)) - 1) ^ adjunctIndices
+            neighbors = adjunctComp & graph[-1]
+            notNeighbors = adjunctComp & ~graph[-1]
+            notEdges = [1 | notNeighbor for notNeighbor in expand(notNeighbors, n)]
 
-            e4 = []
-            maxSet(1, nonNeighbors, neighbors, e4, graph, self.n)
-            self.e4 = maximalToMaximum(e4, 3) # Find independent 4-sets
-            self.e3 = findSmaller(e4, 4, self.n) # Find independent 3-sets
-            self.j3 = findJ(self.e2, self.e3, 3) # Find independent J3
-            self.j4 = findJ(self.e3, self.e4, 4) # Find independent J3
+            maxSets = []
+            maxSet(1, neighbors, notNeighbors, maxSets, graph, n)
+            ind4sets = maximalToMaximum(maxSets, 4) # Find independent 4-sets
+            ind3sets = findSmaller(maxSets, 4, n) # Find independent 3-sets
+            j3sets = findJ(notEdges, ind3sets, 3) # Find independent J3
+            j4sets = findJ(ind3sets, ind4sets, 4) # Find independent J3
 
-        else:
-            (Node.roots).append(self)
+            self.k2 = findIndices(neighbors, n)
+            self.e2 = findIndices(notNeighbors, n)
+            self.j3 = [findIndices(sub ^ 1, n) for sub in j3sets]
+            self.e3 = [findIndices(sub ^ 1, n) for sub in ind3sets]
+            self.j4 = [findIndices(sub ^ 1, n) for sub in j4sets]
+            self.e4 = [findIndices(sub ^ 1, n) for sub in ind4sets]
 
-    # Collapses a node based on its adjunct and its parent
-    def collapseNode(self, H):
-        # Recursively, we need the parent and the adjunct collapsed
-        if not (self.parent).isCollapsed:
-            (self.parent).collapseNode(H)
-        if not (self.adjunct).isCollapsed:
-            (self.adjunct).collapseNode(H)
-
-        parentNeighborhoods = (self.parent).neighborhoods
-        adjunctNeighborhoods = (self.adjunct).neighborhoods
-
-        shared = (self.adjunct).n - 1 # Find shared portion of parent and adjunct to make sure they are equivalent
-        K2 = findIndicesList(self.k2, self.n)
-        J3 = findIndicesList(self.j3, self.n)
-        J4 = findIndicesList(self.j4, self.n)
-        E2 = findIndicesList(self.e2, self.n)
-        E3 = findIndicesList(self.e3, self.n)
-        E4 = findIndicesList(self.e4, self.n)
-        for possibleParent in parentNeighborhoods:
-            for possibleAdjunct in adjunctNeighborhoods: # We iterate through all possible parent adjunct combinations
-                cone1 = possibleAdjunct[-1]
-                flag = False
-                if possibleParent[:shared] == possibleAdjunct[:-1]:
-                    for sub in K2:
-                        if not H.K2(cone1, possibleParent[sub[0]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in E2:
-                        if not H.E2(cone1, possibleParent[sub[0]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in J3:
-                        if not H.J3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in E3:
-                        if not H.E3(cone1, possibleParent[sub[0]], possibleParent[sub[1]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in J4:
-                        if not H.J4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-
-                    for sub in E4:
-                        if not H.E4(cone1, possibleParent[sub[0]], possibleParent[sub[1]], possibleParent[sub[2]]):
-                            flag = True
-                            break
-                    if flag == True:
-                        continue
-                    (self.neighborhoods).append(possibleParent + list(possibleAdjunct[-1]))
-
-        self.isCollapsed = True
-        return self
+    def __str__(self):
+        return printBitList(self.graph, self.n)+ "\n\n" +\
+               "K2: " + str(self.k2) + "\n" + "E2: " + str(self.e2) + "\n" +\
+               "J3: " + str(self.j3) + "\n" + "E3: " + str(self.e3) + "\n" +\
+               "J4: " + str(self.j4) + "\n" + "E4: " + str(self.e4) + "\n"
 ###################################################################################################################
 
 # run #############################################################################################################
+'''
 # R(K4,J6,10) to find feasible cones in
 with open('k4k4e_10.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [decodeG6(graph, True) for graph in k4j4]
 #printGraphs(k4j4)
 Hs = [H(graph, 10) for graph in k4j4]
-
+'''
 # Make double tree with these R(K3, J5, 7)
 with open('k3k5e_07.g6', 'r') as file:
     k3j5 = file.read().splitlines()
 k3j5 = [decodeG6(graph, True) for graph in k3j5]
 # printGraphs(k3j5)
-Gs = [Node(7, formatAdjacencyMatrix(graph), list(range(7)), [], False) for graph in k3j5]
-
-for h in Hs:
-    neighborhoods = [[neighborhood] for neighborhood in h.feasibleCones]
-    for root in Node.roots:
-        root.neighborhoods = neighborhoods
-        root.isCollapsed = True
-
-    for g in Gs:
-        g.collapseNode(h)
-
-    for graph in Node.tree:
-        graph.neighborhoods = []
-'''
+start = time.time()
+Gs = [Node(7, formatGraph(graph)) for graph in k3j5]
+print(time.time()- start)
