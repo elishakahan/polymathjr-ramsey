@@ -15,7 +15,7 @@ def printBit(decimal, n):
 
 # Print binary form of tuple of decimal numbers
 def printBitList(decimalList, n):
-    return str(tuple(printBit(decimal, n) for decimal in decimalList))
+    return "\n".join(tuple(printBit(decimal, n) for decimal in decimalList))
 
 # Print rows of a adjacency matrix on seperate lines
 def printGraph(graph):
@@ -56,7 +56,7 @@ def decodeG6(compressed, isSquare): # Option for triangle and square adjacency m
     index = 0
     for column in range(1, n):
         for row in range(column):
-            adjacencyMatrix[row][column] = adjacencyMatrix[column][row] = int(bitVect[index]) # We iterate through the rows and the columns, filling them out as we go
+            adjacencyMatrix[row][column] = adjacencyMatrix[column][row] = 1 ^ int(bitVect[index]) # We iterate through the rows and the columns, filling them out as we go
             index += 1
     return adjacencyMatrix
 
@@ -195,7 +195,7 @@ def findSmaller(maximalList, order, n): # order is the order of the maximal subg
 def findJ(smaller, larger, order): # We take order - 1 and order independent sets.
     j = []
     length = len(smaller)
-    if len(smaller) > 1: # We make sure smaller is big enough
+    if length > 1: # We make sure smaller is big enough
         for k in range(length - 1):
             for l in range(k + 1, length): # We iterate through all pairs in smaller
                 first, second = smaller[k], smaller[l]
@@ -296,14 +296,6 @@ class H(object):
         return "K2: " + printBitList(self.k2, 7) + "\n" + "K3: " + printBitList(self.k3, 7) + "\n" +\
                "E2: " + printBitList(self.e2, 7) + "\n" + "E3: " + printBitList(self.e3, 7) + "\n" +\
                "J3: " + printBitList(self.j3, 7)
-
-graph = [[0, 0, 0, 1, 1, 0, 0],
-         [0, 0, 0, 0, 1, 1, 0],
-         [0, 0, 0, 1, 0, 0, 1],
-         [1, 0, 1, 0, 1, 1, 1],
-         [1, 1, 0, 1, 0, 1, 0],
-         [0, 1, 0, 1, 1, 0, 1],
-         [0, 0, 1, 1, 0, 1, 0]]
 ###################################################################################################################
 
 ###################################################################################################################
@@ -353,8 +345,48 @@ def isomorphismList(adjacencyMatrix, nodeList, n, permutations):
     for node in nodeList:
         graph = node.graph
         if graph in labellings:
-            return (graph, labellings[graph])
+            return (node, labellings[graph])
     return False
+
+def excludedJ3(k2, e2, adjacencyMatrix, n):
+    j3 = []
+    for neighbor in k2:
+        neighborPos = (1 << (n - neighbor - 1))
+        neighbors = adjacencyMatrix[neighbor]
+        for notNeighbor in e2:
+            notNeighborPos = (1 << (n - notNeighbor - 1))
+            if neighbors & notNeighborPos == 0:
+                j3.append(neighborPos | notNeighborPos | 1)
+    return j3
+
+def excludedJ4(excludedJ3, e3):
+    j4 = []
+    length = len(excludedJ3)
+    if length > 1: # We make sure smaller is big enough
+        for k in range(length - 1):
+            for l in range(k + 1, length): # We iterate through all pairs in smaller
+                first, second = excludedJ3[k], excludedJ3[l]
+                combo = 1 | (first ^ second)
+                if bin(combo).count('1') == 3 and combo in e3:
+                    j4.append(first | second)
+    return j4
+
+# We then can define our original function
+def findSmaller2(maximalList, order, n): # order is the order of the maximal subgraph
+    smaller = []
+    for maximal in maximalList: # We iterate through the list of maximal subgraphs
+        size = bin(maximal).count('1')
+        if size == order - 1:
+            smaller.append(maximal) # We add any subgraph of already the correct size
+        elif size == order:
+             for i in range(n): # We break up the bigger maximal subgraphs
+                sub = maximal & ~(1 << i)  # One possible smaller clique
+                if bitIndex(maximal, i) == 1 and sub not in smaller and sub & 1 == 1: # We make sure there are no duplicates
+                    smaller.append(sub)
+    return smaller
+
+def shift(aList, num):
+    return [i + num for i in aList]
 
 class Node(object):
     nodesDict = {i:[] for i in range(1, 8)}
@@ -371,61 +403,77 @@ class Node(object):
             parentGraph = tuple((row & ~1) >> 1 for row in graph[:-1])
             parent = isomorphismList(parentGraph, Node.nodesDict[n - 1], n - 1, Node.permsDict[n - 1])
             if not parent:
-                self.parent = Node(n - 1, parentGraph)
+                self.parent = (Node(n - 1, parentGraph), tuple(i for i in range(n - 1)))
             else:
                 self.parent = parent
 
             # Creates an adjunct node
             adjunctNum = Node.adjunctDict[n] # We access the class instance adjunctSequence to determine the the number of vertices in the adjunct
-            adjunctIndices = ((1 << (adjunctNum - 1)) << (n - adjunctNum + 1)) | 1
             adjunctGraph = graph[:adjunctNum - 1] + (graph[-1],)
-            adjunctGraph = tuple(((row & adjunctIndices) >> (n - adjunctNum)) | (row & 1) for row in adjunctGraph)
+            flipAdjunct = (1 << (n - adjunctNum + 1)) - 1
+            adjunctGraph = tuple(((row & ~flipAdjunct) >>  (n - adjunctNum)) | (row & 1) for row in adjunctGraph)
             adjunct = isomorphismList(adjunctGraph, Node.nodesDict[adjunctNum], adjunctNum, Node.permsDict[adjunctNum])
             if not adjunct:
-                self.parent = Node(adjunctNum, adjunctGraph)
+                self.adjunct = (Node(adjunctNum, adjunctGraph), tuple(i for i in range(adjunctNum)))
             else:
                 self.adjunct = adjunct
 
-            adjunctComp =  ((1 << (n)) - 1) ^ adjunctIndices
-            neighbors = adjunctComp & graph[-1]
-            notNeighbors = adjunctComp & ~graph[-1]
-            notEdges = [1 | notNeighbor for notNeighbor in expand(notNeighbors, n)]
+            subGraph = tuple(flipAdjunct & row for row in graph[adjunctNum - 1: ])
+            subGraphN = n - adjunctNum + 1
+            neighbors = subGraph[-1]
+            k2 = findIndices(neighbors, subGraphN)
+            notNeighbors = (flipAdjunct & ~neighbors) ^ 1
+            e2 = findIndices(notNeighbors, subGraphN)
+            notEdges = [1 | notNeighbor for notNeighbor in expand(notNeighbors, subGraphN)]
+
+            j3plus = excludedJ3(k2, e2, subGraph, subGraphN)
 
             maxSets = []
-            maxSet(1, neighbors, notNeighbors, maxSets, graph, n)
+            maxSet(1, notNeighbors, 0, maxSets, subGraph, subGraphN)
             ind4sets = maximalToMaximum(maxSets, 4) # Find independent 4-sets
-            ind3sets = findSmaller(maxSets, 4, n) # Find independent 3-sets
+            ind3sets = findSmaller2(maxSets, 4, subGraphN) # Find independent 3-sets
             j3sets = findJ(notEdges, ind3sets, 3) # Find independent J3
+            j3sets += j3plus
             j4sets = findJ(ind3sets, ind4sets, 4) # Find independent J3
+            j4sets += excludedJ4(j3plus, ind3sets)
 
-            self.k2 = findIndices(neighbors, n)
-            self.e2 = findIndices(notNeighbors, n)
-            self.j3 = [findIndices(sub ^ 1, n) for sub in j3sets]
-            self.e3 = [findIndices(sub ^ 1, n) for sub in ind3sets]
-            self.j4 = [findIndices(sub ^ 1, n) for sub in j4sets]
-            self.e4 = [findIndices(sub ^ 1, n) for sub in ind4sets]
+            self.k2 = shift(k2, adjunctNum - 1)
+            self.e2 = shift(e2, adjunctNum - 1)
+            self.j3 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in j3sets]
+            self.e3 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in ind3sets]
+            self.j4 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in j4sets]
+            self.e4 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in ind4sets]
 
     def __str__(self):
-        return printBitList(self.graph, self.n)+ "\n\n" +\
+        return printBitList(self.graph, self.n)+ "\n" +\
                "K2: " + str(self.k2) + "\n" + "E2: " + str(self.e2) + "\n" +\
                "J3: " + str(self.j3) + "\n" + "E3: " + str(self.e3) + "\n" +\
-               "J4: " + str(self.j4) + "\n" + "E4: " + str(self.e4) + "\n"
+               "J4: " + str(self.j4) + "\n" + "E4: " + str(self.e4) + "\n\n"
+        '''
+        return printBitList(self.graph, self.n) + "\n" + "Parent:" + "\n" + printBitList(((self.parent)[0]).graph, self.n - 1) + "---> " + str((self.parent)[1]) + "\n" +\
+               "Adjunct:" + "\n" + printBitList((self.adjunct)[0].graph, Node.adjunctDict[self.n]) + "---> " + str((self.adjunct)[1]) + "\n\n"
+        '''
 ###################################################################################################################
 
 # run #############################################################################################################
-'''
+
 # R(K4,J6,10) to find feasible cones in
 with open('k4k4e_10.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [decodeG6(graph, True) for graph in k4j4]
 #printGraphs(k4j4)
 Hs = [H(graph, 10) for graph in k4j4]
-'''
+
 # Make double tree with these R(K3, J5, 7)
 with open('k3k5e_07.g6', 'r') as file:
     k3j5 = file.read().splitlines()
 k3j5 = [decodeG6(graph, True) for graph in k3j5]
-# printGraphs(k3j5)
-start = time.time()
 Gs = [Node(7, formatGraph(graph)) for graph in k3j5]
-print(time.time()- start)
+
+for i in range(2, 8):
+    print("*********************************************************************************************************")
+    print(len(Node.nodesDict[i]))
+    print("\n")
+    for node in Node.nodesDict[i]:
+        print(node)
+    print("*********************************************************************************************************")
