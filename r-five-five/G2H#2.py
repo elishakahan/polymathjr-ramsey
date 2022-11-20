@@ -116,13 +116,14 @@ class VarArraySolutionPrinter(cp_model.CpSolverSolutionCallback):
     def __init__(self, variables):
         cp_model.CpSolverSolutionCallback.__init__(self)
         self.__variables = variables
-        self.__solution_vector = []
+        self.__solution_vector = set()
     def on_solution_callback(self):
         solution = 0
         for v in self.__variables:
             solution = solution << 1
             solution += self.Value(v)
-        self.__solution_vector.append(solution)
+        self.__solution_vector.add((solution,))
+        #self.__solution_vector.add(tuple(solution))
     def solution_vector(self): # Solution vector, tells us the values of the variables
         return self.__solution_vector
 
@@ -233,6 +234,8 @@ class H(object):
         self.k2, self.e2 = findEdges(graph, n) # Find edges and non-edges
 
         graph = formatGraph(graph)
+        self.graph = graph
+
         k3 = []
         maxClique(0, (1 << n) - 1, 0, k3, graph, n)
         self.k3 = maximalToMaximum(k3, 3) # Find triangles
@@ -321,8 +324,11 @@ def findIndicesList(collection, n):
 def perms(n):
     return list(itertools.permutations(range(n)))
 
-def permuteList(perm, aList):
-    return [aList[i] for i in perm]
+def permuteTuple(perm, aTuple):
+    return tuple(aTuple[i] for i in perm)
+
+def unPermuteTuple(perm, aTuple, n):
+    return tuple(aTuple[perm.index(i)] for i in range(n))
 
 def permuteBit(perm, bitVector, n):
     permuted = 0
@@ -393,9 +399,11 @@ class Node(object):
     permsDict = {i:perms(i) for i in range(1, 8)}
     adjunctDict = {1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4}
 
-    def __init__(self, n, graph):
+    def __init__(self, n, graph, neighborhoods, isCollapsed):
         self.graph = graph # The adjacency matrix the node represents, in formatted form
         self.n = n
+        self.neighborhoods =  neighborhoods
+        self.isCollapsed = isCollapsed
         Node.nodesDict[n].append(self)
 
         if n > 1:
@@ -403,7 +411,7 @@ class Node(object):
             parentGraph = tuple((row & ~1) >> 1 for row in graph[:-1])
             parent = isomorphismList(parentGraph, Node.nodesDict[n - 1], n - 1, Node.permsDict[n - 1])
             if not parent:
-                self.parent = (Node(n - 1, parentGraph), tuple(i for i in range(n - 1)))
+                self.parent = (Node(n - 1, parentGraph, set(), False), tuple(i for i in range(n - 1)))
             else:
                 self.parent = parent
 
@@ -414,7 +422,7 @@ class Node(object):
             adjunctGraph = tuple(((row & ~flipAdjunct) >>  (n - adjunctNum)) | (row & 1) for row in adjunctGraph)
             adjunct = isomorphismList(adjunctGraph, Node.nodesDict[adjunctNum], adjunctNum, Node.permsDict[adjunctNum])
             if not adjunct:
-                self.adjunct = (Node(adjunctNum, adjunctGraph), tuple(i for i in range(adjunctNum)))
+                self.adjunct = (Node(adjunctNum, adjunctGraph, set(), False), tuple(i for i in range(adjunctNum)))
             else:
                 self.adjunct = adjunct
 
@@ -444,18 +452,70 @@ class Node(object):
             self.j4 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in j4sets]
             self.e4 = [shift(findIndices(sub ^ 1, subGraphN), adjunctNum - 1) for sub in ind4sets]
 
+    def collapse(self, H):
+        parent = self.parent
+        adjunct = self.adjunct
+        if parent[0].isCollapsed == False:
+            parent[0].collapse(H)
+        if adjunct[0].isCollapsed == False:
+            adjunct[0].collapse(H)
+        parentNeighborhoods = parent[0].neighborhoods
+        adjunctNeighborhoods = adjunct[0].neighborhoods
+        shared = adjunct[0].n - 1
+        parentLength = self.n - 1
+        for adjunctNeighborhood in adjunctNeighborhoods: # We iterate through all possible parent adjunct combinations
+            adjunctTemp = unPermuteTuple(adjunct[1], adjunctNeighborhood, shared + 1)
+            growthCone = adjunctTemp[-1]
+            for parentNeighborhood in parentNeighborhoods:
+                parentTemp = unPermuteTuple(parent[1], parentNeighborhood, parentLength)
+                if parentTemp[:shared] == adjunctTemp[:-1]:
+                    for sub in self.k2:
+                        if not H.K2(growthCone, parentTemp[sub]):
+                            break
+                    else:
+                        for sub in self.e2:
+                            if not H.E2(growthCone, parentTemp[sub]):
+                                break
+                        else:
+                            for sub in self.j3:
+                                if not H.J3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]]):
+                                    break
+                            else:
+                                for sub in self.e3:
+                                    if not H.E3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]]):
+                                        break
+                                else:
+                                    for sub in self.j4:
+                                        if not H.J4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]]):
+                                            break
+                                    else:
+                                        for sub in self.e4:
+                                            if not H.E4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]]):
+                                                break
+                                        else:
+                                            (self.neighborhoods).add(parentTemp + (adjunctTemp[-1],))
+
+        self.isCollapsed = True
+        return self
+
     def __str__(self):
+        return "Graph: " + "\n" + printBitList(self.graph, self.n) + "\n" + "Neighborhoods: " + "\n" + printDict({i : [printBit(neighborhood[i], 10) for neighborhood in self.neighborhoods] for i in range(self.n)})
+        '''
         return printBitList(self.graph, self.n)+ "\n" +\
                "K2: " + str(self.k2) + "\n" + "E2: " + str(self.e2) + "\n" +\
                "J3: " + str(self.j3) + "\n" + "E3: " + str(self.e3) + "\n" +\
                "J4: " + str(self.j4) + "\n" + "E4: " + str(self.e4) + "\n\n"
-        '''
+
         return printBitList(self.graph, self.n) + "\n" + "Parent:" + "\n" + printBitList(((self.parent)[0]).graph, self.n - 1) + "---> " + str((self.parent)[1]) + "\n" +\
                "Adjunct:" + "\n" + printBitList((self.adjunct)[0].graph, Node.adjunctDict[self.n]) + "---> " + str((self.adjunct)[1]) + "\n\n"
         '''
 ###################################################################################################################
 
 # run #############################################################################################################
+
+
+
+
 
 # R(K4,J6,10) to find feasible cones in
 with open('k4k4e_10.g6', 'r') as file:
@@ -468,12 +528,20 @@ Hs = [H(graph, 10) for graph in k4j4]
 with open('k3k5e_07.g6', 'r') as file:
     k3j5 = file.read().splitlines()
 k3j5 = [decodeG6(graph, True) for graph in k3j5]
-Gs = [Node(7, formatGraph(graph)) for graph in k3j5]
+Gs = [Node(7, formatGraph(graph), set(), False) for graph in k3j5]
 
-for i in range(2, 8):
-    print("*********************************************************************************************************")
-    print(len(Node.nodesDict[i]))
-    print("\n")
+H = Hs[2]
+print(printBitList(H.graph, 10))
+startingNeighborhoods = feasibleCones(H.graph, 10)
+
+for root in Node.nodesDict[1]:
+    root.neighborhoods = startingNeighborhoods
+    root.isCollapsed = True
+
+for G in Gs:
+    G.collapse(H)
+
+for i in range(1, 8):
     for node in Node.nodesDict[i]:
         print(node)
-    print("*********************************************************************************************************")
+    print("-------------------------------------------------------------------------")
