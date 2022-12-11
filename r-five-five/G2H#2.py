@@ -2,9 +2,8 @@
 # Enumerating graphs in R(K4,J5,18) by adding edges between R(K3, J5, 7) and R(K4, J4, 10)
 ###################################################################################################################
 from ortools.sat.python import cp_model
-import numpy as np
 import time
-import itertools
+from itertools import permutations
 
 ###################################################################################################################
 # Returns convenient strings for printing
@@ -264,7 +263,7 @@ def findIndices(bitVector, n): # Turns a bit vector into a list of vertices
     return indices
 
 def perms(n): # Finds all permutations of tuples of length n
-    return list(itertools.permutations(range(n)))
+    return list(permutations(range(n)))
 
 def unPermuteTuple(perm, n): # Finds inverse of a permutation
     return tuple(perm.index(i) for i in range(n))
@@ -544,7 +543,6 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
         print("\nCollapse took " + str(time.time() - start))
     return success
 
-
 ###################################################################################################################
 
 # run #############################################################################################################
@@ -574,8 +572,8 @@ with open('k3k5e_07.g6', 'r') as file:
 k3j5 = [formatGraph(decodeG6(graph)) for graph in orig]  # Relevant G's
 
 gluings = glueG2H(k3j5, 7, k4j4, 10, Node) # Glues G's to H's
-#compressedGluings = [compressG6(glue, 9) + "\n" for glue in gluings] # Compresses successful gluings
-#glueFile = open('glueFile.txt', 'w')
-#glueFile.writelines(compressedGluings) # Writes gluings to a file
-#glueFile.close()
+compressedGluings = [compressG6(glue, 9) + "\n" for glue in gluings] # Compresses successful gluings
+glueFile = open('glueFile.txt', 'w')
+glueFile.writelines(compressedGluings) # Writes gluings to a file
+glueFile.close()
 print(len(gluings))
