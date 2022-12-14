@@ -3,7 +3,6 @@
 ###################################################################################################################
 import time
 from itertools import permutations
-from copy import deepcopy
 
 ###################################################################################################################
 # Returns convenient strings for printing
@@ -271,27 +270,22 @@ class G(object):
         self.h2Dict = {flip & ~i: H2(compG, n, i) for i in range(flip + 1)}
         self.h3Dict = {flip & ~i: H3(compG, n, i) for i in range(flip + 1)}
 
-def K2(bottoms, tops, vertex1, vertex2, h1Dict, h2Dict):
-    origBottoms = -1
+def K2_1(tops, bottom1, bottom2, vertex1, vertex2, h1Dict):
+    intersection = bottom1 & bottom2
+    h1 = h1Dict[intersection]
+    if intersection & h1 != 0:
+        return False
+    tops[vertex1] &= ~(h1 & bottom2)
+    tops[vertex2] &= ~(h1 & bottom1)
+    return True
 
-    while origBottoms != bottoms:
-        origBottoms = bottoms.copy()
-
-        intersection = bottoms[vertex1] & bottoms[vertex2]
-        h1 = h1Dict[intersection]
-        if intersection & h1 != 0:
-            return False
-        tops[vertex1] &= ~(h1 & bottoms[vertex2])
-        tops[vertex2] &= ~(h1 & bottoms[vertex1])
-
-        union = tops[vertex1] | tops[vertex2]
-        h2 = h2Dict[union]
-        if h2 & ~union != 0:
-            return False
-
-        bottoms[vertex1] |= h2 & ~tops[vertex2]
-        bottoms[vertex2] |= h2 & ~tops[vertex1]
-
+def K2_2(bottoms, top1, top2, vertex1, vertex2, h2Dict):
+    union = top1 | top2
+    h2 = h2Dict[union]
+    if h2 & ~union != 0:
+        return False
+    bottoms[vertex1] |= h2 & ~top2
+    bottoms[vertex2] |= h2 & ~top1
     return True
 
 def I2(bottoms, top1, top2, vertex1, vertex2, h2Dict, h3Dict):
@@ -299,7 +293,6 @@ def I2(bottoms, top1, top2, vertex1, vertex2, h2Dict, h3Dict):
     h3 = h3Dict[union]
     if h3 & ~union != 0:
         return False
-
     bottoms[vertex1] |= h3 & ~top2
     bottoms[vertex2] |= h3 & ~top1
 
@@ -307,7 +300,6 @@ def I2(bottoms, top1, top2, vertex1, vertex2, h2Dict, h3Dict):
     h2 = h2Dict[union]
     if h2 & ~intersection != 0:
         return False
-
     bottoms[vertex1] |= h2
     bottoms[vertex2] |= h2
     return True
@@ -328,6 +320,7 @@ def J3(bottoms, top1, top2, top3, vertex1, vertex2, vertex3, h1CompDict):
     bottoms[vertex1] |= h1Comp & ~(top2 | top3)
     bottoms[vertex2] |= h1Comp & ~(top1 | top3)
     bottoms[vertex3] |= h1Comp & ~(top1 | top2)
+
     return True
 
 def I3(bottoms, top1, top2, top3, vertex1, vertex2, vertex3, flip):
@@ -382,10 +375,10 @@ def clearLine(n): # Clears previous n lines on console, used for displaying prog
         print(lineUp, end=lineClear)
 
 class Node(object):
-    nodesDict = {i:[] for i in range(1, 8)} # Keeps track of all nodes
-    mainDict = {i:[] for i in range(1, 8)} # Keeps track of main nodes
-    permsDict = {i:perms(i) for i in range(1, 8)} # Static dictionary, stores permutatations of tuples of different lengths
-    adjunctDict = {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 7: 3} # Static dictionary, stores the adjunct numbers for graphs of different sizes
+    nodesDict = {i:[] for i in range(1, 9)} # Keeps track of all nodes
+    mainDict = {i:[] for i in range(1, 9)} # Keeps track of main nodes
+    permsDict = {i:perms(i) for i in range(1, 9)} # Static dictionary, stores permutatations of tuples of different lengths
+    adjunctDict = {1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4} # Static dictionary, stores the adjunct numbers for graphs of different sizes
 
     def __init__(self, n, graph, neighborhoods, isCollapsed, isMain):
         self.graph = graph # Formatted adjacency matrix of graph
@@ -442,9 +435,8 @@ class Node(object):
 
     @classmethod
     def printCollapse(cls): # Prints out collapsing progress of the main nodes
-        print("\n".join(str(key) + ": " + " ".join('x' if node.isCollapsed else 'o' for node in cls.mainDict[key]) for key in cls.mainDict))
+        print("\n".join(str(key) + ": " + " ".join('x' if node.isCollapsed else 'o' for node in cls.nodesDict[key]) for key in cls.nodesDict))
 
-    ############################################
     def collapseSequence(self, bottoms, tops, G):
         for bottom, top in zip(bottoms, tops):
             if bottom & ~top != 0:
@@ -452,27 +444,29 @@ class Node(object):
 
         originalBottoms = originalTops = -1
         while originalBottoms != bottoms or originalTops != tops:
-            originalBottoms, originalTops = bottoms.copy(), tops.copy()
-            for triangle in self.k3:
-                if not K3(tops, bottoms[triangle[0]], bottoms[triangle[1]], bottoms[triangle[2]], triangle[0], triangle[1], triangle[2]):
+            originalBottoms, originalTops = bottoms[:], tops[:]
+            for nonEdge in self.i2:
+                if not I2(bottoms, tops[nonEdge[0]], tops[nonEdge[1]], nonEdge[0], nonEdge[1], G.h2Dict, G.h3Dict):
+                    return False
+            for edge in self.k2:
+                if not K2_1(tops, bottoms[edge[0]], bottoms[edge[1]], edge[0], edge[1], G.h1Dict):
+                    return False
+                if not K2_2(bottoms, tops[edge[0]], tops[edge[1]], edge[0], edge[1], G.h2Dict):
                     return False
             for ind3set in self.i3:
                 if not I3(bottoms, tops[ind3set[0]], tops[ind3set[1]], tops[ind3set[2]], ind3set[0], ind3set[1], ind3set[2], G.flip):
                     return False
-            for edge in self.k2:
-                if not K2(bottoms, tops, edge[0], edge[1], G.h1Dict, G.h2Dict):
-                    return False
-            for nonEdge in self.i2:
-                if not I2(bottoms, tops[nonEdge[0]], tops[nonEdge[1]], nonEdge[0], nonEdge[1], G.h2Dict, G.h3Dict):
+            for triangle in self.k3:
+                if not K3(tops, bottoms[triangle[0]], bottoms[triangle[1]], bottoms[triangle[2]], triangle[0], triangle[1], triangle[2]):
                     return False
             for j3set in self.j3:
                 if not J3(bottoms, tops[j3set[0]], tops[j3set[1]], tops[j3set[2]], j3set[0], j3set[1], j3set[2], G.h1CompDict):
                     return False
-
         return True
 
-    ############################################
     def collapseNode(self, G):
+        clearLine(9)
+        Node.printCollapse()
         parent = self.parent
         adjunct = self.adjunct
 
@@ -500,39 +494,31 @@ class Node(object):
 
         self.neighborhoods = neighborhoods
         self.isCollapsed = True
-        '''
-        if self.isMain:
-            clearLine(7)
-            Node.printCollapse()
-        '''
         return self
 
-    ############################################
-    def sequenceSplit(self, sequence, G):
+    def sequenceSplit(self, bottoms, tops, G):
         split = []
         for i in range(self.n):
-            bottom = sequence[0][i]
-            top = sequence[1][i]
+            bottom, top = bottoms[i], tops[i]
             if bottom != top:
                 vertex = 1 << ((top & ~bottom).bit_length() - 1)
-                include = (sequence[0][:i] + [sequence[0][i] | vertex] + sequence[0][i + 1:], sequence[1])
+                include = (bottoms[:i] + [bottom | vertex] + bottoms[i + 1:], tops[:])
                 if self.collapseSequence(include[0], include[1], G):
                     split.append(include)
-                notInclude = (sequence[0], sequence[1][:i] + [sequence[1][i] & ~vertex] + sequence[1][i + 1:])
+                notInclude = (bottoms[:], tops[:i] + [top & ~vertex] + tops[i + 1:])
                 if self.collapseSequence(notInclude[0], notInclude[1], G):
                     split.append(notInclude)
                 return split
 
-    ############################################
     def collapseH(self, G):
         coneNeighborhoods = []
         neighborhoods = self.neighborhoods
         while neighborhoods != []:
-            sequence = neighborhoods.pop()
-            if sequence[0] == sequence[1]:
-                coneNeighborhoods.append(tuple(sequence[0]))
+            bottoms, tops = neighborhoods.pop()
+            if bottoms ==  tops:
+                coneNeighborhoods.append(tuple(bottoms))
             else:
-                neighborhoods.extend(self.sequenceSplit(sequence, G))
+                neighborhoods.extend(self.sequenceSplit(bottoms, tops, G))
         return coneNeighborhoods
 
 
@@ -600,7 +586,7 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
         start = time.time()
         count = 0
         print("********************************************************************************************************************")
-        #Node.printCollapse() # Showing the progress in collapsing the main nodes
+        Node.printCollapse() # Showing the progress in collapsing the main nodes
 
         bottoms, tops = intervals(g.graph, gSize)
         startingIntervals = [([bottom], [top]) for bottom, top in zip(bottoms, tops)]
@@ -647,31 +633,25 @@ def compressG6(formatMatrix, n): # Compresses formatted adjacency matrix into g6
     code = [int(stringVect[6 * i: 6 * i + 6], 2) + 63 for i in range(int(size6 / 6))]
     return chr(n + 63) + "".join(chr(int(stringVect[6 * i: 6 * i + 6], 2) + 63) for i in range(int(size6 / 6)))
 
-with open('k4k4e_03.g6', 'r') as file:
+with open('k4k4e_08.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [formatGraph(decodeG6(graph)) for graph in k4j4] # Relevant H's
 
-with open('k3k5e_03.g6', 'r') as file:
+with open('k3k5e_09.g6', 'r') as file:
     orig = file.read().splitlines()
 k3j5 = [formatGraph(decodeG6(graph)) for graph in orig]  # Relevant G's
 
-gluings = glueG2H(k3j5, 3, k4j4, 3, Node) # Glues G's to H's
-
+start = time.time()
+gluings = glueG2H(k3j5, 9, k4j4, 8, Node) # Glues G's to H's
+print("Total time: ", time.time() - start)
+print("Total gluings: ", len(gluings))
+"""
 for glue in gluings:
-    if not isk4j5(glue, 7):
+    if not isk4j5(glue, 9):
         print("error")
 
-print(len(gluings))
-'''
-#compressedGluings = [compressG6(glue, 7) + "\n" for glue in gluings] # Compresses successful gluings
-compressedGluings = {compressG6(glue, 7) for glue in gluings}
-
-with open('glueFile2.txt', 'r') as file:
-    otherCompressed = set(file.read().splitlines())
-
-difference = otherCompressed.difference(compressedGluings)
-difference = {complement(formatGraph(decodeG6(g)), 7) for g in difference}
-for graph in difference:
-    print(printBitList(graph, 7))
-    print("\n")
-'''
+compressedGluings = [compressG6(glue, 9) + "\n" for glue in gluings] # Compresses successful gluings
+glueFile = open('glueFileH2G.txt', 'w')
+glueFile.writelines(compressedGluings) # Writes gluings to a file
+glueFile.close()
+"""
