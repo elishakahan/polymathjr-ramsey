@@ -1,7 +1,6 @@
 ###################################################################################################################
 # Enumerating graphs in R(K4,J5,18) by adding edges between R(K3, J5, 7) and R(K4, J4, 10)
 ###################################################################################################################
-from ortools.sat.python import cp_model
 import time
 from itertools import permutations
 
@@ -77,62 +76,32 @@ def maxSet(R, P, X, maxSets, adjacencyMatrix, n): # Finds maximal independent se
     compMatrix = complement(adjacencyMatrix, n) # Uses complement
     return maxClique(R, P, X, maxSets, compMatrix, n)
 
-class VarArraySolutionPrinter(cp_model.CpSolverSolutionCallback): # Solution printer to keep track of solutions
-    def __init__(self, variables):
-        cp_model.CpSolverSolutionCallback.__init__(self)
-        self.__variables = variables
-        self.__solution_vector = set()
-    def on_solution_callback(self):
-        solution = 0
-        for v in self.__variables:
-            solution = solution << 1
-            solution += self.Value(v)
-        self.__solution_vector.add((solution,))
-    def solution_vector(self):
-        return self.__solution_vector
-
-def feasibleCones(H, n): # Algorithm to find feasible cones
-    vertices = range(n)
-    model = cp_model.CpModel() # Create model
-    variables = [model.NewBoolVar('v'+str(i)) for i in vertices] # Make variables for each of the vertices determining if they will be present in the feasible cone
-
+def feasibleCones(H, n):
     # Add triangle conditions
     triangles = []
     maxClique(0, (1 << n) - 1, 0, triangles, H, n)
     triangles = [triangle for triangle in triangles if bin(triangle).count('1') == 3] # Looks only at at maximal cliques of three
 
-    for triangle in triangles:
-        model.AddBoolOr([variables[vertex].Not() for vertex in vertices if bitIndex(triangle, n - vertex - 1)]) # Ensures that a feasible cone doesn't contain all three vertices
-
-    # Add complement triangle conditions
     ind3sets = []
     maxSet(0, (1 << n) - 1, 0, ind3sets, H, n)
     ind3sets = [set for set in ind3sets if bin(set).count('1') == 3]
-    for set in ind3sets:
-        model.AddBoolOr([variables[vertex] for vertex in vertices if bitIndex(set, n - vertex - 1)]) # Ensures that a feasible cone is connected to the independent 3-set
 
-    solver = cp_model.CpSolver()
-    solution_printer = VarArraySolutionPrinter(variables)
-    solver.parameters.enumerate_all_solutions = True
-    status = solver.Solve(model, solution_printer)
-    bitSolutions = solution_printer.solution_vector()
-    return bitSolutions
+    solutions = set()
+    for i in range(1 << n):
+        for triangle in triangles:
+            if triangle & ~i == 0:
+                break
+        else:
+            for ind3set in ind3sets:
+                if i & ind3set == 0:
+                    break
+            else:
+                solutions.add((i,))
+    return solutions
 ###################################################################################################################
 
 ###################################################################################################################
 # Repertoire of clique and j subgraph finding functions.
-
-def findEdges(adjacencyMatrix, n): # Finds list of edges and non-edges from non-formatted adjacency matrix
-    edgeSet = []
-    nonEdgeSet = []
-    for row in range(n - 1):
-        for column in range(row + 1, n):
-            if adjacencyMatrix[row][column] == 1:
-                edgeSet.append((1 << (n - row - 1)) | (1 << (n - column - 1))) # If the adjacency matrix value is 1, add an edge
-            else:
-                nonEdgeSet.append( (1 << (n - row - 1)) | (1 << (n  - column - 1)) ) # Otherwise, it is a non edge
-    return edgeSet, nonEdgeSet
-
 
 def findSmaller(maximalList, order, n): # Finds cliques of order one less than maximal
     smaller = []
@@ -166,7 +135,6 @@ def maximalToMaximum(maximal, order): # Finds the maximum order graphs in a list
 
 ###################################################################################################################
 # Defines a class for the H graphs, which are in R(K4, J4, 10)
-
 def isContains(bitVect1, bitVect2): # Determines if the set represented by bitVect2 is contained within the set represented by bitVect1
     return (bitVect2 & ~bitVect1) == 0
 
@@ -178,76 +146,99 @@ def isNotDoubleConnect(intersection, union, bitVect): # Determine
     check = union & bitVect # We see how many bits are set in this number
     return isNotConnect(intersection, bitVect) and check & (check - 1) == 0 # The last portion checks if check only contains one vertex
 
+def H1(G, n, x):
+    solution = 0
+    pointer = 1 << n
+    for row in G:
+        pointer >>= 1
+        if row & x != 0:
+            solution |= pointer
+    return solution
+
+def H2(G, n, x):
+    solution = 0
+    pointer = 1 << n
+    for row in G:
+        pointer >>= 1
+        check = row & x
+        while check & (check - 1) != 0:
+            length = check.bit_length()
+            if G[n - length] & row & x != 0:
+                solution |= pointer
+                break
+            check ^= 1 << (length - 1)
+    return solution
+
+def H3(G, n, x):
+    solution = 0
+    pointer = 1 << n
+    for row in G:
+        pointer >>= 1
+        check = row & x
+        while check != 0:
+            length = check.bit_length()
+            vertex = 1 << (length - 1)
+            neighborhood = G[n - length]
+            if (x & neighborhood & ~row & ~pointer) != 0 or (x & row & ~neighborhood & ~vertex)!= 0:
+                solution |= pointer
+                break
+            check ^= vertex
+    return solution
+
 class H(object):
-    def __init__(self, graph, n):
+    def __init__(self, h, n):
         self.n = n # Number of vertices
-        self.k2, self.e2 = findEdges(graph, n) # Find edges and non-edges
+        self.h = h
 
-        graph = formatGraph(graph)
-        self.graph = graph
+        flip = (1 << n) - 1
+        self.flip = flip
 
-        k3 = []
-        maxClique(0, (1 << n) - 1, 0, k3, graph, n)
-        self.k3 = maximalToMaximum(k3, 3) # Finds triangles
+        self.h1Dict = {i: H1(h, n, i) for i in range(flip + 1)}
+        self.h1Dict2 = {flip & ~i: H1(h, n, i) for i in range(flip + 1)}
 
-        e3 = []
-        maxSet(0, (1 << n) - 1, 0, e3, graph, n)
-        self.e3 = maximalToMaximum(e3, 3) # Finds independent 3-sets
+        compH = complement(h, n)
+        self.h1CompDict = {flip & ~i: H1(compH, n, i) for i in range(flip + 1)}
+        self.h2Dict = {flip & ~i: H2(compH, n, i) for i in range(flip + 1)}
+        self.h3Dict = {flip & ~i: H3(compH, n, i) for i in range(flip + 1)}
 
-        self.j3 = findJ(self.e2, self.e3, 3) # Finds independent J3's
+def K2(cone1, cone2, h1Dict, h2Dict): # Collapsing rule if two vertices in G are connected
+    intersection = cone1 & cone2 # Inspects intersection of the neighborhoods of the cones
+    if h1Dict[intersection] & intersection != 0:
+        return False
+    union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
+    if h2Dict[union] & ~union != 0:
+        return False
+    return True
 
-    def K2(self, cone1, cone2): # Collapsing rule if two vertices in G are connected
-        intersection = cone1 & cone2 # Inspects intersection of the neighborhoods of the cones
-        for edge in self.k2:
-            if (edge & ~intersection) == 0: # isContains(intersection, edge): # Ensures that it contains no edges
-                return False
+def E2(cone1, cone2, h2Dict, h3Dict): # Collapsing rule if two vertices in G are not connected
+    union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
+    if h3Dict[union] & ~union != 0:
+        return False
+    intersection = cone1 & cone2 # Inspects intersection of the two neighborhoods
+    if h2Dict[union] & ~intersection != 0:
+        return False
+    return True
 
-        union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
-        for ind3set in self.e3:
-            if (union & ind3set) == 0: # isNotConnect(union, ind3set): # Ensures that it connects to every indpendent 3-set
-                return False
-        return True
+def J3(cone1, cone2, cone3, h1CompDict): # Collapsing rule if three vertices in G form an independent j3
+    union = cone1 | cone2 | cone3 # Inspects the union of the neighborhoods of the cones
+    return h1CompDict[union] & ~union == 0
 
-    def E2(self, cone1, cone2): # Collapsing rule if two vertices in G are not connected
-        union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
-        for sub in self.j3:
-            if (union & sub) == 0: # isNotConnect(union, sub): # Ensures that it connects to every independent j3
-                return False
+def E3(cone1, cone2, cone3, h1Dict2, h1CompDict): # Collapsing rule if three vertices in G are not connected
+    union = cone1 | cone2 | cone3 # Inspects the union of the neighborhoods of the cones
+    if h1Dict2[union] & ~union != 0:
+        return False
+    intersection = (cone1 & cone2) | (cone1 & cone3) | (cone2 & cone3) # Inspects the union of the pairwise intersections of the neighborhoods
+    if h1CompDict[union] & ~intersection != 0:
+        return False
+    return True
 
-        intersection = cone1 & cone2 # Inspects intersection of the two neighborhoods
-        for ind3set in self.e3:
-            check = union & ind3set
-            if (intersection & ind3set) == 0 and check & (check - 1) == 0: # isNotDoubleConnect(intersection, union, ind3set): # Ensures that there are two edges to every independent 3-set
-                return False
-        return True
+def J4(cone1, cone2, cone3, cone4, flip): # Collapsing rule if four vertices in G form an independent j4
+    union = cone1 | cone2 | cone3 | cone4 # Inspects the union of the neighborhood of the cones
+    return union == flip # Ensures it includes every vertex
 
-    def J3(self, cone1, cone2, cone3): # Collapsing rule if three vertices in G form an independent j3
-        union = cone1 | cone2 | cone3 # Inspects the union of the neighborhoods of the cones
-        for nonEdge in self.e2:
-            if (union & nonEdge) == 0: # isNotConnect(union, nonEdge): # Ensures that it connects to every non-edge
-                return False
-        return True
-
-    def E3(self, cone1, cone2, cone3): # Collapsing rule if three vertices in G are not connected
-        union = cone1 | cone2 | cone3 # Inspects the union of the neighborhoods of the cones
-        for edge in self.k2:
-            if (union & edge) == 0: # isNotConnect(union, edge): # Ensures that it connects to every edge
-                return False
-
-        intersection = (cone1 & cone2) | (cone1 & cone3) | (cone2 & cone3) # Inspects the union of the pairwise intersections of the neighborhoods
-        for nonEdge in self.e2:
-            check = union & nonEdge
-            if (intersection & nonEdge) == 0 and check & (check - 1) == 0: # isNotDoubleConnect(intersection, union, nonEdge): # Ensures that there are two edges to every non-edge
-                return False
-        return True
-
-    def J4(self, cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G form an independent j4
-        union = cone1 | cone2 | cone3 | cone4 # Inspects the union of the neighborhood of the cones
-        return union == (1 << self.n) - 1 # Ensures it includes every vertex
-
-    def E4(self, cone1, cone2, cone3, cone4): # Collapsing rule if four vertices in G are indepedents
-        intersection = (cone1 & cone2) | (cone1 & cone3) | (cone1 & cone4) | (cone2 & cone3) | (cone2 & cone4) | (cone3 & cone4) # Inspects the union of the pairwise intersections of the neighborhoods
-        return intersection == (1 << self.n) - 1 # Ensures it include every vertex
+def E4(cone1, cone2, cone3, cone4, flip): # Collapsing rule if four vertices in G are indepedents
+    intersection = (cone1 & cone2) | (cone1 & cone3) | (cone1 & cone4) | (cone2 & cone3) | (cone2 & cone4) | (cone3 & cone4) # Inspects the union of the pairwise intersections of the neighborhoods
+    return intersection == flip # Ensures it include every vertex
 ###################################################################################################################
 
 ###################################################################################################################
@@ -332,11 +323,11 @@ def clearLine(n): # Clears previous n lines on console, used for displaying prog
         print(lineUp, end=lineClear)
 
 class Node(object):
-    nodesDict = {i:[] for i in range(1, 8)} # Keeps track of all nodes
-    mainDict = {i:[] for i in range(1, 8)} # Keeps track of main nodes
-    permsDict = {i:perms(i) for i in range(1, 8)} # Static dictionary, stores permutatations of tuples of different lengths
-    adjunctDict = {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 7: 3} # Static dictionary, stores the adjunct numbers for graphs of different sizes
-    adjunctIndicesDict = {1: 1, 2: 1, 3: int('001', 2), 4: int('0001', 2), 5: int('00001', 2), 6: int('100001', 2), 7: int('1100001', 2)} # Static dictionary, keeps track of the indices of vertices in the adjunct
+    nodesDict = {i:[] for i in range(1, 9)} # Keeps track of all nodes
+    mainDict = {i:[] for i in range(1, 9)} # Keeps track of main nodes
+    permsDict = {i:perms(i) for i in range(1, 9)} # Static dictionary, stores permutatations of tuples of different lengths
+    adjunctDict = {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 7: 3, 8: 3} # Static dictionary, stores the adjunct numbers for graphs of different sizes
+    adjunctIndicesDict = {1: 1, 2: 1, 3: int('001', 2), 4: int('0001', 2), 5: int('00001', 2), 6: int('100001', 2), 7: int('1100001', 2), 8: int('1100001', 2)} # Static dictionary, keeps track of the indices of vertices in the adjunct
 
     def __init__(self, n, graph, neighborhoods, isCollapsed, isMain):
         self.graph = graph # Formatted adjacency matrix of graph
@@ -406,6 +397,8 @@ class Node(object):
         print("\n".join(str(key) + ": " + " ".join('x' if node.isCollapsed else 'o' for node in cls.mainDict[key]) for key in cls.mainDict))
 
     def collapse(self, H):
+        h1Dict, h1CompDict, h1Dict2, h2Dict, h3Dict, flip = H.h1Dict, H.h1CompDict, H.h1Dict2, H.h2Dict, H.h3Dict, H.flip
+
         parent = self.parent
         adjunct = self.adjunct
         if parent[0].isCollapsed == False:
@@ -423,36 +416,36 @@ class Node(object):
             for parentTemp in parentNeighborhoods:
                 if parentTemp[:shared] == adjunctTemp[:-1]:
                     for sub in self.e4:
-                        if not H.E4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]]):
+                        if not E4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]], flip):
                             break
                     else:
                         for sub in self.j4:
-                            if not H.J4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]]):
+                            if not J4(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], parentTemp[sub[2]], flip):
                                 break
                         else:
                             for sub in self.j3:
-                                if not H.J3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]]):
+                                if not J3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], h1CompDict):
                                     break
                             else:
                                 for sub in self.e3:
-                                    if not H.E3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]]):
+                                    if not E3(growthCone, parentTemp[sub[0]], parentTemp[sub[1]], h1Dict2, h1CompDict):
                                         break
                                 else:
                                     for sub in self.e2:
-                                        if not H.E2(growthCone, parentTemp[sub]):
+                                        if not E2(growthCone, parentTemp[sub], h2Dict, h3Dict):
                                             break
                                     else:
                                         for sub in self.k2:
-                                            if not H.K2(growthCone, parentTemp[sub]):
+                                            if not K2(growthCone, parentTemp[sub], h1Dict, h2Dict):
                                                 break
                                         else:
                                             (self.neighborhoods).add(parentTemp + (adjunctTemp[-1],))
 
         self.isCollapsed = True
 
-        if self.isMain:
-            clearLine(7)
-            Node.printCollapse()
+        #if self.isMain:
+            #clearLine(8)
+            #Node.printCollapse()
 
         return self
 ###################################################################################################################
@@ -518,9 +511,9 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
         start = time.time()
         count = 0
         print("********************************************************************************************************************")
-        Node.printCollapse() # Showing the progress in collapsing the main nodes
+        #Node.printCollapse() # Showing the progress in collapsing the main nodes
 
-        startingNeighborhoods = feasibleCones(h.graph, hSize)
+        startingNeighborhoods = feasibleCones(h.h, hSize)
         for root in Node.nodesDict[1]: # Sets the root node for this H
             root.neighborhoods = startingNeighborhoods
             root.isCollapsed = True
@@ -531,7 +524,7 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
 
         for g in Gs: # Takes successful gluings, converts them into new adjacency matrices
             for neighborhood in g.neighborhoods:
-                success.append(joinMatrix(g.graph, gSize, h.graph, hSize, neighborhood))
+                success.append(joinMatrix(g.graph, gSize, h.h, hSize, neighborhood))
                 count += 1
 
         for i in range(1, gSize + 1): # Resets the nodes for the next H
@@ -563,17 +556,25 @@ def compressG6(formatMatrix, n): # Compresses formatted adjacency matrix into g6
     code = [int(stringVect[6 * i: 6 * i + 6], 2) + 63 for i in range(int(size6 / 6))]
     return chr(n + 63) + "".join(chr(int(stringVect[6 * i: 6 * i + 6], 2) + 63) for i in range(int(size6 / 6)))
 
-with open('k4k4e_10.g6', 'r') as file:
+with open('k4k4e_09.g6', 'r') as file:
     k4j4 = file.read().splitlines()
-k4j4 = [decodeG6(graph) for graph in k4j4] # Relevant H's
+k4j4 = [formatGraph(decodeG6(graph)) for graph in k4j4] # Relevant H's
 
-with open('k3k5e_07.g6', 'r') as file:
+with open('k3k5e_08.g6', 'r') as file:
     orig = file.read().splitlines()
 k3j5 = [formatGraph(decodeG6(graph)) for graph in orig]  # Relevant G's
 
-gluings = glueG2H(k3j5, 7, k4j4, 10, Node) # Glues G's to H's
-compressedGluings = [compressG6(glue, 9) + "\n" for glue in gluings] # Compresses successful gluings
-glueFile = open('glueFile.txt', 'w')
+start = time.time()
+gluings = glueG2H(k3j5, 8, k4j4, 9, Node) # Glues G's to H's
+print("Total time: ", time.time() - start)
+print("Total gluings: ", len(gluings))
+
+for glue in gluings:
+    if not isk4j5(glue, 18):
+        print("error")
+
+compressedGluings = [compressG6(glue, 18) + "\n" for glue in gluings] # Compresses successful gluings
+glueFile = open('glueFileG2H.txt', 'w')
 glueFile.writelines(compressedGluings) # Writes gluings to a file
 glueFile.close()
-print(len(gluings))
+
