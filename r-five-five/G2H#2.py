@@ -205,18 +205,18 @@ def K2(cone1, cone2, h1Dict, h2Dict): # Collapsing rule if two vertices in G are
     intersection = cone1 & cone2 # Inspects intersection of the neighborhoods of the cones
     if h1Dict[intersection] & intersection != 0:
         return False
-    union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
-    if h2Dict[union] & ~union != 0:
-        return False
+    #union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
+    #if h2Dict[union] & ~union != 0:
+        #return False
     return True
 
 def E2(cone1, cone2, h2Dict, h3Dict): # Collapsing rule if two vertices in G are not connected
     union = cone1 | cone2 # Inspects union of the neighborhoods of the cones
     if h3Dict[union] & ~union != 0:
         return False
-    intersection = cone1 & cone2 # Inspects intersection of the two neighborhoods
-    if h2Dict[union] & ~intersection != 0:
-        return False
+    #intersection = cone1 & cone2 # Inspects intersection of the two neighborhoods
+    #if h2Dict[union] & ~intersection != 0:
+        #return False
     return True
 
 def J3(cone1, cone2, cone3, h1CompDict): # Collapsing rule if three vertices in G form an independent j3
@@ -443,9 +443,9 @@ class Node(object):
 
         self.isCollapsed = True
 
-        #if self.isMain:
-            #clearLine(8)
-            #Node.printCollapse()
+        if self.isMain:
+            clearLine(8)
+            Node.printCollapse()
 
         return self
 ###################################################################################################################
@@ -509,9 +509,8 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
 
     for h in Hs:
         start = time.time()
-        count = 0
         print("********************************************************************************************************************")
-        #Node.printCollapse() # Showing the progress in collapsing the main nodes
+        Node.printCollapse() # Showing the progress in collapsing the main nodes
 
         startingNeighborhoods = feasibleCones(h.h, hSize)
         for root in Node.nodesDict[1]: # Sets the root node for this H
@@ -524,7 +523,7 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
 
         for g in Gs: # Takes successful gluings, converts them into new adjacency matrices
             for neighborhood in g.neighborhoods:
-                success.append(joinMatrix(g.graph, gSize, h.h, hSize, neighborhood))
+                #success.append(joinMatrix(g.graph, gSize, h.h, hSize, neighborhood))
                 count += 1
 
         for i in range(1, gSize + 1): # Resets the nodes for the next H
@@ -534,7 +533,7 @@ def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's an
 
         print("\nThere were " + str(count) + " successful gluings")
         print("\nCollapse took " + str(time.time() - start))
-    return success
+    return count
 
 ###################################################################################################################
 
@@ -556,25 +555,26 @@ def compressG6(formatMatrix, n): # Compresses formatted adjacency matrix into g6
     code = [int(stringVect[6 * i: 6 * i + 6], 2) + 63 for i in range(int(size6 / 6))]
     return chr(n + 63) + "".join(chr(int(stringVect[6 * i: 6 * i + 6], 2) + 63) for i in range(int(size6 / 6)))
 
-with open('k4k4e_09.g6', 'r') as file:
+with open('RK4J6/dataset_k4kme/k4k4e_05.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [formatGraph(decodeG6(graph)) for graph in k4j4] # Relevant H's
 
-with open('k3k5e_08.g6', 'r') as file:
+with open('RK4J6/dataset_k3kme/k3k5e_05.g6', 'r') as file:
     orig = file.read().splitlines()
 k3j5 = [formatGraph(decodeG6(graph)) for graph in orig]  # Relevant G's
 
 start = time.time()
-gluings = glueG2H(k3j5, 8, k4j4, 9, Node) # Glues G's to H's
+gluings = glueG2H(k3j5, 5, k4j4, 5, Node) # Glues G's to H's
 print("Total time: ", time.time() - start)
-print("Total gluings: ", len(gluings))
+print("Total gluings: ", gluings)
 
+"""
 for glue in gluings:
-    if not isk4j5(glue, 18):
+    if not isk4j5(glue, 9):
         print("error")
 
 compressedGluings = [compressG6(glue, 18) + "\n" for glue in gluings] # Compresses successful gluings
-glueFile = open('glueFileG2H.txt', 'w')
+glueFile = open('glueFile2.txt', 'w')
 glueFile.writelines(compressedGluings) # Writes gluings to a file
 glueFile.close()
-
+"""
