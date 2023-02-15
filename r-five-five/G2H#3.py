@@ -88,19 +88,17 @@ def feasibleCones(H, n):
     maxSet(0, (1 << n) - 1, 0, ind3sets, H, n)
     ind3sets = [set for set in ind3sets if bin(set).count('1') == 3]
 
-    solutions = []
-    for i in range(1 << n):
-        for triangle in triangles:
-            if triangle & ~i == 0:
-                break
-        else:
-            for ind3set in ind3sets:
-                if i & ind3set == 0:
-                    break
-            else:
-                solutions.append([i])
+    posSolutions = np.arange(1 << n, dtype=np.uint16)
+    boolMask = np.full(1 << n, True)
 
-    return np.array(solutions, dtype=np.uint16)
+    for triangle in triangles:
+        boolMask &= triangle & ~posSolutions != 0
+
+    for ind3set in ind3sets:
+        boolMask &= ind3set & posSolutions != 0
+
+    solutions = posSolutions[boolMask]
+    return np.reshape(solutions, (len(solutions), 1))
 ###################################################################################################################
 
 ###################################################################################################################
@@ -141,14 +139,6 @@ def maximalToMaximum(maximal, order): # Finds the maximum order graphs in a list
 def isContains(bitVect1, bitVect2): # Determines if the set represented by bitVect2 is contained within the set represented by bitVect1
     return (bitVect2 & ~bitVect1) == 0
 
-def isNotConnect(bitVect1, bitVect2): # Determines if the intersection of sets represented by bitVect1 and bitVect2 is empty
-    return (bitVect1 & bitVect2) == 0
-
-# Helper function to check if at least element of the third set is contained in the intersection of the sets or if two of its elements are contained in the union of the two sets
-def isNotDoubleConnect(intersection, union, bitVect): # Determine
-    check = union & bitVect # We see how many bits are set in this number
-    return isNotConnect(intersection, bitVect) and check & (check - 1) == 0 # The last portion checks if check only contains one vertex
-
 def H1(G, n, x):
     solution = 0
     pointer = 1 << n
@@ -187,22 +177,6 @@ def H3(G, n, x):
                 break
             check ^= vertex
     return solution
-
-class H(object):
-    def __init__(self, h, n):
-        self.n = n # Number of vertices
-        self.h = h
-
-        flip = (1 << n) - 1
-        self.flip = flip
-
-        self.h1Dict = np.array([H1(h, n, i) for i in range(flip + 1)], dtype=np.uint16)
-        self.h1Dict2 = np.array([H1(h, n, i) for i in range(flip, -1, -1)], dtype=np.uint16)
-
-        compH = complement(h, n)
-        self.h1CompDict = np.array([H1(compH, n, i) for i in range(flip, -1, -1)], dtype=np.uint16)
-        self.h2Dict = np.array([H2(compH, n, i) for i in range(flip, -1, -1)], dtype=np.uint16)
-        self.h3Dict = np.array([H3(compH, n, i) for i in range(flip, -1, -1)], dtype=np.uint16)
 ###################################################################################################################
 
 ###################################################################################################################
@@ -222,9 +196,6 @@ def perms(n): # Finds all permutations of tuples of length n
 
 def unPermuteTuple(perm, n): # Finds inverse of a permutation
     return [perm.index(i) for i in range(n)]
-
-def permuteTuple(perm, aTuple): # Permutes a tuple
-    return tuple(aTuple[index] for index in perm)
 
 def permuteBit(perm, bitVector, n): # Permutes a bit vector
     permuted = 0
@@ -287,6 +258,8 @@ def clearLine(n): # Clears previous n lines on console, used for displaying prog
         print(lineUp, end=lineClear)
 
 class Node(object):
+    mergeTime = 0
+    numpyTime = 0
     nodesDict = {i:[] for i in range(1, 9)} # Keeps track of all nodes
     mainDict = {i:[] for i in range(1, 9)} # Keeps track of main nodes
     permsDict = {i:perms(i) for i in range(1, 9)} # Static dictionary, stores permutatations of tuples of different lengths
@@ -356,18 +329,15 @@ class Node(object):
             self.j4 = [findIndices(sub ^ 1, n) for sub in j4sets if not isContains(adjunctIndices, sub)]
             self.e4 = [findIndices(sub ^ 1, n) for sub in ind4sets if not isContains(adjunctIndices, sub)]
 
-    @classmethod
-    def printCollapse(cls): # Prints out collapsing progress of the main nodes
-        print("\n".join(str(key) + ": " + " ".join('x' if node.isCollapsed else 'o' for node in cls.mainDict[key]) for key in cls.mainDict))
-
-    def collapse(self, H):
+    def collapse(self, flip, h1Dict, h1Dict2, h1CompDict, h2Dict, h3Dict):
         parent = self.parent
         adjunct = self.adjunct
         if parent[0].isCollapsed == False:
-            parent[0].collapse(H)
+            parent[0].collapse(flip, h1Dict, h1Dict2, h1CompDict, h2Dict, h3Dict)
         if adjunct[0].isCollapsed == False:
-            adjunct[0].collapse(H)
+            adjunct[0].collapse(flip, h1Dict, h1Dict2, h1CompDict, h2Dict, h3Dict)
 
+        start = time.time()
         parentNeighborhoods = parent[0].neighborhoods[:, parent[1]]
         adjunctNeighborhoods = adjunct[0].neighborhoods[:, adjunct[1]]
 
@@ -387,7 +357,9 @@ class Node(object):
             posNeighborhoods = pd.merge(left, right, how="inner", on=keys, sort=False)
 
         posNeighborhoods = posNeighborhoods.to_numpy()
+        Node.mergeTime += time.time() - start
 
+        start = time.time()
         boolNeighborhoods = np.full(len(posNeighborhoods), True)
         vectorized = np.transpose(posNeighborhoods)
         growthCone = posNeighborhoods[:, -1]
@@ -395,40 +367,37 @@ class Node(object):
         for sub in self.e4:
             cone1, cone2, cone3 =  vectorized[sub[0]], vectorized[sub[1]], vectorized[sub[2]]
             intersection = (growthCone & cone1) | (growthCone & cone2) | (growthCone & cone3) | (cone1 & cone2) | (cone1 & cone3) | (cone2 & cone3)
-            boolNeighborhoods &= intersection == H.flip
+            boolNeighborhoods &= intersection == flip
 
         for sub in self.j4:
             cone1, cone2, cone3 =  vectorized[sub[0]], vectorized[sub[1]], vectorized[sub[2]]
             union = growthCone | cone1 | cone2 | cone3
-            boolNeighborhoods &= union == H.flip
+            boolNeighborhoods &= union == flip
 
         for sub in self.j3:
             cone1, cone2 =  vectorized[sub[0]], vectorized[sub[1]]
             union = growthCone | cone1 | cone2
-            boolNeighborhoods &= H.h1CompDict[union] & ~union == 0
+            boolNeighborhoods &= h1CompDict[union] & ~union == 0
 
         for sub in self.e3:
             cone1, cone2 = vectorized[sub[0]], vectorized[sub[1]]
             union = growthCone | cone1 | cone2
-            boolNeighborhoods &= H.h1Dict2[union] & ~union == 0
+            boolNeighborhoods &= h1Dict2[union] & ~union == 0
             intersection = (growthCone & cone1) | (growthCone & cone2) | (cone1 & cone2)
-            boolNeighborhoods &= H.h1CompDict[union] & ~intersection == 0
+            boolNeighborhoods &= h1CompDict[union] & ~intersection == 0
 
         for sub in self.e2:
             union = growthCone | vectorized[sub]
-            boolNeighborhoods &= H.h3Dict[union] & ~union == 0
+            boolNeighborhoods &= h3Dict[union] & ~union == 0
 
         for sub in self.k2:
             intersection = growthCone & vectorized[sub]
-            boolNeighborhoods &= H.h1Dict[intersection] & intersection == 0
+            boolNeighborhoods &= h1Dict[intersection] & intersection == 0
 
         self.neighborhoods = posNeighborhoods[boolNeighborhoods]
+        Node.numpyTime += time.time() - start
         self.isCollapsed = True
-        """
-        if self.isMain:
-            clearLine(8)
-            Node.printCollapse()
-        """
+
         return self
 ###################################################################################################################
 
@@ -446,6 +415,7 @@ def transposeMatrix(matrix, m, n): # Transposes formatted matrix
     return transposed
 
 def joinMatrix(G, gSize, H, hSize, neighborhood): # Joins two graphs G and H, with knowledge of connections in between them as given by neighborhood
+    neighborhood = neighborhood.tolist()
     n = 1 + gSize + hSize
 
     row1 = ((1 << gSize) - 1) << hSize # First row of new matrix
@@ -486,43 +456,52 @@ def isk4j5(graph, n): # Checks if successful gluings are in R(K4, J5)
 def glueG2H(listG, gSize, listH, hSize, Node): # Glues together a list of G's and H's
     success = []
     count = 0
-    Hs = [H(h, hSize) for h in listH]
     Gs = [Node(gSize, g, None, False, True) for g in listG]
 
-    for h in Hs:
+    initial = 0
+    for h in listH:
         start = time.time()
         print("********************************************************************************************************************")
-        #Node.printCollapse() # Showing the progress in collapsing the main nodes
+        flip = (1 << hSize) - 1
 
-        startingNeighborhoods = feasibleCones(h.h, hSize)
+        h1Dict = np.array([H1(h, hSize, i) for i in range(flip + 1)], dtype=np.uint16)
+        h1Dict2 = np.array([H1(h, hSize, i) for i in range(flip, -1, -1)], dtype=np.uint16)
+
+        compH = complement(h, hSize)
+        h1CompDict = np.array([H1(compH, hSize, i) for i in range(flip, -1, -1)], dtype=np.uint16)
+        h2Dict = np.array([H2(compH, hSize, i) for i in range(flip, -1, -1)], dtype=np.uint16)
+        h3Dict = np.array([H3(compH, hSize, i) for i in range(flip, -1, -1)], dtype=np.uint16)
+
+        startingNeighborhoods = feasibleCones(h, hSize)
+        initial += time.time() - start
         for root in Node.nodesDict[1]: # Sets the root node for this H
             root.neighborhoods = startingNeighborhoods
             root.isCollapsed = True
 
         for i in range(2, gSize + 1): # Collapses nodes
             for node in Node.mainDict[i]:
-                node.collapse(h)
-        """
+                node.collapse(flip, h1Dict, h1Dict2, h1CompDict, h2Dict, h3Dict)
+
         for g in Gs: # Takes successful gluings, converts them into new adjacency matrices
             for neighborhood in g.neighborhoods:
-                success.append(joinMatrix(g.graph, gSize, h.h, hSize, neighborhood))
-                count += 1
-        """
-        for g in Gs:
-            for neighborhood in g.neighborhoods:
+                success.append(joinMatrix(g.graph, gSize, h, hSize, neighborhood))
                 count += 1
 
         for i in range(1, gSize + 1): # Resets the nodes for the next H
             for node in Node.nodesDict[i]:
                 node.neighborhoods = set()
                 node.isCollapsed = False
-        print("\nThere were " + str(count) + " successful gluings")
+
         print("\nCollapse took " + str(time.time() - start))
-    return count
+
+    print("\nThere were " + str(count) + " successful gluings")
+    print("Initial: " + str(initial))
+    return success
 
 ###################################################################################################################
 
 # run #############################################################################################################
+
 def compressG6(formatMatrix, n): # Compresses formatted adjacency matrix into g6 format for storage, inverse of decodeG6()
     bitVect = 0
     count = 0
@@ -540,26 +519,27 @@ def compressG6(formatMatrix, n): # Compresses formatted adjacency matrix into g6
     code = [int(stringVect[6 * i: 6 * i + 6], 2) + 63 for i in range(int(size6 / 6))]
     return chr(n + 63) + "".join(chr(int(stringVect[6 * i: 6 * i + 6], 2) + 63) for i in range(int(size6 / 6)))
 
-with open('RK4J6/dataset_k4kme/k4k4e_05.g6', 'r') as file:
+with open('RK4J6/dataset_k4kme/k4k4e_04.g6', 'r') as file:
     k4j4 = file.read().splitlines()
 k4j4 = [formatGraph(decodeG6(graph)) for graph in k4j4] # Relevant H's
 
-with open('RK4J6/dataset_k3kme/k3k5e_05.g6', 'r') as file:
+with open('RK4J6/dataset_k3kme/k3k5e_04.g6', 'r') as file:
     orig = file.read().splitlines()
 k3j5 = [formatGraph(decodeG6(graph)) for graph in orig]  # Relevant G's
 
 start = time.time()
-gluings = glueG2H(k3j5, 5, k4j4, 5, Node) # Glues G's to H's
-print("Total time: ", time.time() - start)
-print("Total gluings: ", gluings)
+gluings = glueG2H(k3j5, 4, k4j4, 4, Node) # Glues G's to H's
 
-"""
+print("Total gluings: ", len(gluings))
+print("Total time: ", time.time() - start)
+print("Merge: " + str(Node.mergeTime))
+print("Numpy: " + str(Node.numpyTime))
+
 for glue in gluings:
     if not isk4j5(glue, 9):
         print("error")
 
-compressedGluings = [compressG6(glue, 18) + "\n" for glue in gluings] # Compresses successful gluings
-glueFile = open('glueFile2.txt', 'w')
+compressedGluings = [compressG6(glue, 9) + "\n" for glue in gluings] # Compresses successful gluings
+glueFile = open('trashyGlue.txt', 'w')
 glueFile.writelines(compressedGluings) # Writes gluings to a file
 glueFile.close()
-"""
